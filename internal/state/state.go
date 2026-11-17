@@ -1,6 +1,12 @@
 package state
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -11,81 +17,115 @@ import (
 type BackupStatus string
 
 const (
-	StatusNeverRun BackupStatus = "never_run"
+	StatusNeverRun BackupStatus = "never"
 	StatusRunning  BackupStatus = "running"
 	StatusSuccess  BackupStatus = "success"
 	StatusError    BackupStatus = "error"
 )
 
-// DeviceState holds in-memory telemetry, online status, and backup history for a single router.
+// DeviceState holds persistent telemetry and backup status for a router.
 type DeviceState struct {
 	Name              string       `json:"name"`
 	Host              string       `json:"host"`
 	Port              int          `json:"port"`
 	Model             string       `json:"model"`
-	Version           string       `json:"version"`
+	Firmware          string       `json:"firmware"`
 	Uptime            string       `json:"uptime,omitempty"`
 	LastSeen          time.Time    `json:"last_seen,omitempty"`
 	IsOnline          bool         `json:"is_online"`
-	Status            BackupStatus `json:"status"`
-	LastBackupTime    time.Time    `json:"last_backup_time,omitempty"`
-	LastBackupSuccess bool         `json:"last_backup_success"`
-	LastBackupError   string       `json:"last_backup_error,omitempty"`
-	LastBackupRscSize int64        `json:"last_backup_rsc_size,omitempty"`
-	LastBackupBinSize int64        `json:"last_backup_bin_size,omitempty"`
+	Status            BackupStatus `json:"last_status"`
+	LastBackupAt      time.Time    `json:"last_backup_at,omitempty"`
+	LastError         string       `json:"last_error,omitempty"`
+	LastBackupRscSize int64        `json:"last_rsc_size,omitempty"`
+	LastBackupBinSize int64        `json:"last_bin_size,omitempty"`
 }
 
-// Registry manages thread-safe in-memory state of all fleet devices.
-type Registry struct {
+// StateManager coordinates thread-safe access and atomic disk persistence of device state.
+type StateManager struct {
+	path   string
 	mu     sync.RWMutex
 	states map[string]*DeviceState
+	logger *slog.Logger
 }
 
-// NewRegistry initializes an empty Registry.
-func NewRegistry() *Registry {
-	return &Registry{
+// NewManager loads the state from disk (or creates empty) and returns a StateManager.
+func NewManager(path string, logger *slog.Logger) (*StateManager, error) {
+	cleanPath := filepath.Clean(path)
+	sm := &StateManager{
+		path:   cleanPath,
 		states: make(map[string]*DeviceState),
+		logger: logger.With(slog.String("component", "state_manager")),
 	}
+
+	if data, err := os.ReadFile(cleanPath); err == nil && len(data) > 0 {
+		var loaded map[string]*DeviceState
+		if jsonErr := json.Unmarshal(data, &loaded); jsonErr == nil {
+			sm.states = loaded
+			sm.logger.Info("Loaded device state from disk",
+				slog.String("file", cleanPath),
+				slog.Int("devices", len(loaded)),
+			)
+		} else {
+			sm.logger.Warn("Failed to parse state file, starting fresh", slog.Any("error", jsonErr))
+		}
+	} else if !os.IsNotExist(err) && err != nil {
+		return nil, fmt.Errorf("failed reading state file %q: %w", cleanPath, err)
+	}
+
+	return sm, nil
 }
 
-// InitFromConfig ensures all routers defined in config exist in the state registry.
-func (r *Registry) InitFromConfig(routers []config.RouterConfig) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// InitFromConfig ensures that all routers configured in config exist in state.
+func (sm *StateManager) InitFromConfig(routers []config.RouterConfig, def config.DefaultsConfig) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
-	activeNames := make(map[string]struct{})
+	active := make(map[string]struct{})
+	modified := false
+
 	for _, rc := range routers {
-		activeNames[rc.Name] = struct{}{}
-		if _, exists := r.states[rc.Name]; !exists {
-			r.states[rc.Name] = &DeviceState{
-				Name:    rc.Name,
-				Host:    rc.Host,
-				Port:    rc.Port,
-				Model:   "Unknown",
-				Version: "Unknown",
-				Status:  StatusNeverRun,
+		active[rc.Name] = struct{}{}
+		eff := rc.Effective(def)
+
+		s, exists := sm.states[rc.Name]
+		if !exists {
+			sm.states[rc.Name] = &DeviceState{
+				Name:     rc.Name,
+				Host:     eff.Host,
+				Port:     eff.Port,
+				Model:    "Unknown",
+				Firmware: "Unknown",
+				Status:   StatusNeverRun,
 			}
+			modified = true
 		} else {
-			// Update host/port if changed
-			r.states[rc.Name].Host = rc.Host
-			r.states[rc.Name].Port = rc.Port
+			if s.Host != eff.Host || s.Port != eff.Port {
+				s.Host = eff.Host
+				s.Port = eff.Port
+				modified = true
+			}
 		}
 	}
 
-	// Remove devices that no longer exist in config
-	for name := range r.states {
-		if _, exists := activeNames[name]; !exists {
-			delete(r.states, name)
+	// Clean up devices removed from config
+	for name := range sm.states {
+		if _, exists := active[name]; !exists {
+			delete(sm.states, name)
+			modified = true
 		}
+	}
+
+	if modified {
+		_ = sm.saveLocked()
 	}
 }
 
 // Get returns a copy of a router's state.
-func (r *Registry) Get(name string) (DeviceState, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (sm *StateManager) Get(name string) (DeviceState, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
 
-	s, exists := r.states[name]
+	s, exists := sm.states[name]
 	if !exists {
 		return DeviceState{}, false
 	}
@@ -93,93 +133,126 @@ func (r *Registry) Get(name string) (DeviceState, bool) {
 }
 
 // GetAll returns a copy map of all device states.
-func (r *Registry) GetAll() map[string]DeviceState {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (sm *StateManager) GetAll() map[string]DeviceState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
 
-	res := make(map[string]DeviceState, len(r.states))
-	for k, v := range r.states {
+	res := make(map[string]DeviceState, len(sm.states))
+	for k, v := range sm.states {
 		res[k] = *v
 	}
 	return res
 }
 
-// SetRunning marks that a backup or check is actively running for this device.
-func (r *Registry) SetRunning(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// SetRunning marks that a backup is actively running for this device.
+func (sm *StateManager) SetRunning(name string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
-	if s, exists := r.states[name]; exists {
+	if s, exists := sm.states[name]; exists {
 		s.Status = StatusRunning
 	}
 }
 
 // UpdateDeviceInfo updates hardware model, firmware version, and online timestamp.
-func (r *Registry) UpdateDeviceInfo(name string, model, version, uptime string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (sm *StateManager) UpdateDeviceInfo(name string, model, firmware, uptime string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
-	s, exists := r.states[name]
+	s, exists := sm.states[name]
 	if !exists {
 		s = &DeviceState{
 			Name:   name,
 			Status: StatusNeverRun,
 		}
-		r.states[name] = s
+		sm.states[name] = s
 	}
 
 	if model != "" {
 		s.Model = model
 	}
-	if version != "" {
-		s.Version = version
+	if firmware != "" {
+		s.Firmware = firmware
 	}
 	if uptime != "" {
 		s.Uptime = uptime
 	}
 	s.IsOnline = true
 	s.LastSeen = time.Now()
+
+	_ = sm.saveLocked()
 }
 
 // SetOffline records an error when connecting to a device.
-func (r *Registry) SetOffline(name string, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (sm *StateManager) SetOffline(name string, err error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
-	if s, exists := r.states[name]; exists {
+	if s, exists := sm.states[name]; exists {
 		s.IsOnline = false
 		s.Status = StatusError
 		if err != nil {
-			s.LastBackupError = err.Error()
+			s.LastError = err.Error()
 		}
+		_ = sm.saveLocked()
 	}
 }
 
-// UpdateBackupResult saves the outcome of a backup run.
-func (r *Registry) UpdateBackupResult(name string, success bool, err error, rscSize, binSize int64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// UpdateBackupResult saves the outcome of a backup run and persists to disk.
+func (sm *StateManager) UpdateBackupResult(name string, success bool, err error, rscSize, binSize int64) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
-	s, exists := r.states[name]
+	s, exists := sm.states[name]
 	if !exists {
 		s = &DeviceState{Name: name}
-		r.states[name] = s
+		sm.states[name] = s
 	}
 
-	s.LastBackupTime = time.Now()
-	s.LastBackupSuccess = success
+	s.LastBackupAt = time.Now()
 
 	if success {
 		s.Status = StatusSuccess
-		s.LastBackupError = ""
+		s.LastError = ""
 		s.LastBackupRscSize = rscSize
 		s.LastBackupBinSize = binSize
 		s.IsOnline = true
-		s.LastSeen = s.LastBackupTime
+		s.LastSeen = s.LastBackupAt
 	} else {
 		s.Status = StatusError
 		if err != nil {
-			s.LastBackupError = err.Error()
+			s.LastError = err.Error()
 		}
 	}
+
+	_ = sm.saveLocked()
+}
+
+// saveLocked atomically persists state to disk using encoding/json/v2.
+func (sm *StateManager) saveLocked() error {
+	data, err := json.Marshal(sm.states, jsontext.WithIndent("  "))
+	if err != nil {
+		sm.logger.Error("Failed to marshal state to JSON", slog.Any("error", err))
+		return err
+	}
+	data = append(data, '\n')
+
+	dir := filepath.Dir(sm.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("failed creating state dir %q: %w", dir, err)
+	}
+
+	tmpFile := sm.path + ".tmp"
+	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
+		sm.logger.Error("Failed to write temporary state file", slog.Any("error", err))
+		return err
+	}
+
+	if err := os.Rename(tmpFile, sm.path); err != nil {
+		_ = os.Remove(tmpFile)
+		sm.logger.Error("Failed to rename temporary state file", slog.Any("error", err))
+		return err
+	}
+
+	return nil
 }

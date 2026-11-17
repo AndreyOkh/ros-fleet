@@ -14,15 +14,21 @@ import (
 func TestRunnerContextCancellation(t *testing.T) {
 	tempDir := t.TempDir()
 	cfgPath := filepath.Join(tempDir, "config.json")
+	statePath := filepath.Join(tempDir, "state.json")
 
 	cfgJSON := `{
 		"backup_dir": "` + tempDir + `",
+		"state_file": "` + statePath + `",
 		"concurrency": 2,
 		"timeout_sec": 5,
-		"schedule_interval": "1h",
+		"defaults": {
+			"port": 22,
+			"user": "admin",
+			"password": "pwd"
+		},
 		"routers": [
-			{"name": "R1", "host": "127.0.0.1", "user": "admin", "password": "pwd"},
-			{"name": "R2", "host": "127.0.0.2", "user": "admin", "password": "pwd"}
+			{"name": "R1", "host": "127.0.0.1"},
+			{"name": "R2", "host": "127.0.0.2"}
 		]
 	}`
 	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0o600); err != nil {
@@ -34,12 +40,15 @@ func TestRunnerContextCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reg := state.NewRegistry()
+	stateMgr, err := state.NewManager(statePath, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	r := New(cfgMgr, reg, slog.Default())
+	r := New(cfgMgr, stateMgr, slog.Default())
 	summary, err := r.Run(ctx)
 	if err != nil {
 		t.Fatalf("unexpected fatal error: %v", err)

@@ -4,50 +4,54 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/AndreyOkh/ros-fleet/internal/config"
+	"github.com/AndreyOkh/ros-fleet/internal/gitrepo"
 	"github.com/AndreyOkh/ros-fleet/internal/mikrotik"
 	"github.com/AndreyOkh/ros-fleet/internal/notifier"
 	"github.com/AndreyOkh/ros-fleet/internal/state"
 	"github.com/AndreyOkh/ros-fleet/internal/storage"
 )
 
-// Runner coordinates the backup pipeline and telemetry collection.
+// Runner coordinates the backup pipeline, git sync, and state updates.
 type Runner struct {
 	cfgMgr   *config.Manager
 	storage  *storage.Storage
 	notifier *notifier.TelegramNotifier
-	registry *state.Registry
+	stateMgr *state.StateManager
+	gitRepo  *gitrepo.GitRepository
 	logger   *slog.Logger
 }
 
 // New creates a new Runner instance.
-func New(cfgMgr *config.Manager, registry *state.Registry, logger *slog.Logger) *Runner {
+func New(cfgMgr *config.Manager, stateMgr *state.StateManager, logger *slog.Logger) *Runner {
 	cfg := cfgMgr.Get()
 	return &Runner{
 		cfgMgr:   cfgMgr,
 		storage:  storage.New(cfg.BackupDir),
 		notifier: notifier.NewTelegramNotifier(cfg.Telegram, logger),
-		registry: registry,
+		stateMgr: stateMgr,
+		gitRepo:  gitrepo.New(cfg.Git, logger),
 		logger:   logger.With(slog.String("component", "runner")),
 	}
 }
 
-// Run executes the backup process for all enabled routers concurrently up to Concurrency limit.
+// Run executes the backup process for all enabled routers.
 func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 	cfg := r.cfgMgr.Get()
-	// Update storage baseDir in case it changed
 	r.storage = storage.New(cfg.BackupDir)
+	r.gitRepo = gitrepo.New(cfg.Git, r.logger)
 
-	// Synchronize registry with configured devices
-	r.registry.InitFromConfig(cfg.Routers)
+	// Sync state manager with latest configured devices
+	r.stateMgr.InitFromConfig(cfg.Routers, cfg.Defaults)
 
-	var activeRouters []config.RouterConfig
+	var activeRouters []config.EffectiveRouterConfig
 	for _, rc := range cfg.Routers {
 		if rc.IsEnabled() {
-			activeRouters = append(activeRouters, rc)
+			activeRouters = append(activeRouters, rc.Effective(cfg.Defaults))
 		} else {
 			r.logger.Debug("Skipping disabled router", slog.String("router", rc.Name))
 		}
@@ -66,16 +70,16 @@ func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 
 	reports := make([]notifier.RouterReport, 0, len(activeRouters))
 
-	for _, routerCfg := range activeRouters {
+	for _, effRouter := range activeRouters {
 		select {
 		case <-ctx.Done():
 			r.logger.Warn("Global context cancelled, aborting remaining router backups",
-				slog.String("router", routerCfg.Name),
+				slog.String("router", effRouter.Name),
 			)
 			mu.Lock()
 			reports = append(reports, notifier.RouterReport{
-				Name:    routerCfg.Name,
-				Host:    routerCfg.Host,
+				Name:    effRouter.Name,
+				Host:    effRouter.Host,
 				Success: false,
 				Err:     fmt.Errorf("backup aborted: %w", ctx.Err()),
 			})
@@ -85,18 +89,18 @@ func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 		}
 
 		wg.Add(1)
-		go func(rc config.RouterConfig) {
+		go func(eff config.EffectiveRouterConfig) {
 			defer func() {
 				<-sem
 				wg.Done()
 			}()
 
-			rep := r.backupRouter(ctx, rc, cfg)
+			rep := r.backupRouter(ctx, eff, cfg)
 
 			mu.Lock()
 			reports = append(reports, rep)
 			mu.Unlock()
-		}(routerCfg)
+		}(effRouter)
 	}
 
 	wg.Wait()
@@ -130,15 +134,18 @@ func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 		slog.Int("failed", failedCount),
 	)
 
-	// Retention cleanup
-	removedDirs, rotateErr := r.storage.Rotate(cfg.RetentionDays, r.logger)
+	// Automated retention cleanup
+	deletedFiles, freedBytes, rotateErr := r.storage.Rotate(cfg.RetentionDays, r.logger)
 	if rotateErr != nil {
 		r.logger.Error("Local retention rotation encountered errors", slog.Any("error", rotateErr))
-	} else if removedDirs > 0 {
-		r.logger.Info("Local retention cleanup completed", slog.Int("removed_directories", removedDirs))
+	} else if deletedFiles > 0 {
+		r.logger.Info("Local retention cleanup completed",
+			slog.Int("deleted_files", deletedFiles),
+			slog.Int64("freed_bytes", freedBytes),
+		)
 	}
 
-	// Send notification to Telegram
+	// Telegram notification
 	if notifyErr := r.notifier.SendReport(ctx, summary); notifyErr != nil {
 		r.logger.Error("Failed to send Telegram notification", slog.Any("error", notifyErr))
 	}
@@ -146,7 +153,7 @@ func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 	return summary, nil
 }
 
-// RunSingle executes a backup for a single router on-demand.
+// RunSingle executes backup for a single router on-demand.
 func (r *Runner) RunSingle(ctx context.Context, routerName string) (notifier.RouterReport, error) {
 	cfg := r.cfgMgr.Get()
 	rc, found := r.cfgMgr.GetRouter(routerName)
@@ -154,7 +161,8 @@ func (r *Runner) RunSingle(ctx context.Context, routerName string) (notifier.Rou
 		return notifier.RouterReport{}, fmt.Errorf("router %q not found in configuration", routerName)
 	}
 
-	report := r.backupRouter(ctx, rc, cfg)
+	eff := rc.Effective(cfg.Defaults)
+	report := r.backupRouter(ctx, eff, cfg)
 	return report, report.Err
 }
 
@@ -166,47 +174,48 @@ func (r *Runner) RefreshDevice(ctx context.Context, routerName string) (*mikroti
 		return nil, fmt.Errorf("router %q not found in configuration", routerName)
 	}
 
+	eff := rc.Effective(cfg.Defaults)
 	timeout := time.Duration(cfg.TimeoutSec) * time.Second
 	opCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	client, err := mikrotik.Connect(opCtx, rc, timeout, cfg.InsecureIgnoreHostKey, r.logger)
+	client, err := mikrotik.Connect(opCtx, eff, timeout, r.logger)
 	if err != nil {
-		r.registry.SetOffline(routerName, err)
+		r.stateMgr.SetOffline(routerName, err)
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
 	defer client.Close()
 
 	info, err := client.FetchDeviceInfo(opCtx)
 	if err != nil {
-		r.registry.SetOffline(routerName, err)
+		r.stateMgr.SetOffline(routerName, err)
 		return nil, fmt.Errorf("failed to fetch device info: %w", err)
 	}
 
-	r.registry.UpdateDeviceInfo(routerName, info.Model, info.Version, info.Uptime)
+	r.stateMgr.UpdateDeviceInfo(routerName, info.Model, info.Version, info.Uptime)
 	return info, nil
 }
 
 // backupRouter performs the atomic backup lifecycle for a single router.
-func (r *Runner) backupRouter(parentCtx context.Context, rc config.RouterConfig, cfg config.Config) notifier.RouterReport {
+func (r *Runner) backupRouter(parentCtx context.Context, eff config.EffectiveRouterConfig, cfg config.Config) notifier.RouterReport {
 	start := time.Now()
-	log := r.logger.With(slog.String("router", rc.Name), slog.String("host", rc.Host))
+	log := r.logger.With(slog.String("router", eff.Name), slog.String("host", eff.Host))
 
 	log.Info("Starting backup for router")
-	r.registry.SetRunning(rc.Name)
+	r.stateMgr.SetRunning(eff.Name)
 
 	timeout := time.Duration(cfg.TimeoutSec) * time.Second
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 
 	report := notifier.RouterReport{
-		Name: rc.Name,
-		Host: rc.Host,
+		Name: eff.Name,
+		Host: eff.Host,
 	}
 
 	defer func() {
 		report.Duration = time.Since(start)
-		r.registry.UpdateBackupResult(rc.Name, report.Success, report.Err, report.RscSize, report.BackupSize)
+		r.stateMgr.UpdateBackupResult(eff.Name, report.Success, report.Err, report.RscSize, report.BackupSize)
 
 		if report.Success {
 			log.Info("Router backup completed successfully",
@@ -223,16 +232,16 @@ func (r *Runner) backupRouter(parentCtx context.Context, rc config.RouterConfig,
 	}()
 
 	// 1. Prepare local storage path
-	destPaths, err := r.storage.PrepareDestination(rc.Name, start)
+	destPaths, err := r.storage.PrepareDestination(eff.Name, start)
 	if err != nil {
 		report.Err = fmt.Errorf("local storage preparation failed: %w", err)
 		return report
 	}
 
 	// 2. Connect via SSH/SFTP
-	client, err := mikrotik.Connect(ctx, rc, timeout, cfg.InsecureIgnoreHostKey, r.logger)
+	client, err := mikrotik.Connect(ctx, eff, timeout, r.logger)
 	if err != nil {
-		r.registry.SetOffline(rc.Name, err)
+		r.stateMgr.SetOffline(eff.Name, err)
 		report.Err = fmt.Errorf("connection failed: %w", err)
 		return report
 	}
@@ -240,17 +249,17 @@ func (r *Runner) backupRouter(parentCtx context.Context, rc config.RouterConfig,
 
 	// 3. Collect/Refresh telemetry while connected
 	if info, devErr := client.FetchDeviceInfo(ctx); devErr == nil && info != nil {
-		r.registry.UpdateDeviceInfo(rc.Name, info.Model, info.Version, info.Uptime)
+		r.stateMgr.UpdateDeviceInfo(eff.Name, info.Model, info.Version, info.Uptime)
 	}
 
 	// 4. Create RSC export
-	if err := client.CreateExport(ctx, destPaths.BaseFilename, rc.ExportSensitive); err != nil {
+	if err := client.CreateExport(ctx, destPaths.BaseFilename, eff.ExportSensitive); err != nil {
 		report.Err = fmt.Errorf("export command failed: %w", err)
 		return report
 	}
 
 	// 5. Create binary backup
-	if err := client.CreateBackup(ctx, destPaths.BaseFilename, rc.EncryptBackup, rc.BackupPassword); err != nil {
+	if err := client.CreateBackup(ctx, destPaths.BaseFilename, eff.EncryptBackup, eff.BackupPassword); err != nil {
 		report.Err = fmt.Errorf("backup command failed: %w", err)
 		return report
 	}
@@ -287,7 +296,16 @@ func (r *Runner) backupRouter(parentCtx context.Context, rc config.RouterConfig,
 	}
 	report.RscSize = rscBytes
 
-	// 8. Download .backup file
+	// 8. Sync .rsc file with Git repository (if enabled)
+	if cfg.Git.Enabled {
+		if content, readErr := os.ReadFile(destPaths.LocalRscPath); readErr == nil {
+			if _, syncErr := r.gitRepo.SyncConfig(ctx, eff.Name, content); syncErr != nil {
+				log.Warn("Git config sync returned error", slog.Any("error", syncErr))
+			}
+		}
+	}
+
+	// 9. Download .backup file
 	backupFile, err := client.OpenRemoteFile(remoteBackupPath)
 	if err != nil {
 		report.Err = fmt.Errorf("failed to open remote backup file: %w", err)
@@ -301,7 +319,7 @@ func (r *Runner) backupRouter(parentCtx context.Context, rc config.RouterConfig,
 	}
 	report.BackupSize = backupBytes
 
-	// 9. Verify local files
+	// 10. Verify local files
 	if _, err := r.storage.VerifyFile(destPaths.LocalRscPath); err != nil {
 		report.Err = fmt.Errorf("rsc local file integrity check failed: %w", err)
 		return report
@@ -311,7 +329,7 @@ func (r *Runner) backupRouter(parentCtx context.Context, rc config.RouterConfig,
 		return report
 	}
 
-	// 10. Clean up temporary files from RouterOS flash
+	// 11. Clean up temporary files from RouterOS flash
 	_ = client.RemoveFile(ctx, remoteRscPath)
 	_ = client.RemoveFile(ctx, remoteBackupPath)
 

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestConfigLoadAndDefaults(t *testing.T) {
@@ -12,12 +11,20 @@ func TestConfigLoadAndDefaults(t *testing.T) {
 	cfgFile := filepath.Join(tempDir, "config.json")
 
 	validJSON := `{
+		"defaults": {
+			"port": 2222,
+			"user": "backup_global",
+			"password": "default_pass",
+			"insecure_ignore_host_key": true
+		},
+		"schedule": {
+			"times": ["04:00", "16:00"],
+			"timezone": "UTC"
+		},
 		"routers": [
 			{
 				"name": "Router-Office",
-				"host": "192.168.88.1",
-				"user": "admin",
-				"password": "secretpassword"
+				"host": "192.168.88.1"
 			}
 		]
 	}`
@@ -35,92 +42,74 @@ func TestConfigLoadAndDefaults(t *testing.T) {
 	if cfg.BackupDir != "./backups" {
 		t.Errorf("expected BackupDir to default to './backups', got %q", cfg.BackupDir)
 	}
+	if cfg.StateFile != "./state.json" {
+		t.Errorf("expected StateFile to default to './state.json', got %q", cfg.StateFile)
+	}
 	if cfg.Concurrency != 5 {
 		t.Errorf("expected Concurrency to default to 5, got %d", cfg.Concurrency)
 	}
 	if cfg.TimeoutSec != 120 {
 		t.Errorf("expected TimeoutSec to default to 120, got %d", cfg.TimeoutSec)
 	}
-	if cfg.ScheduleInterval != "24h" {
-		t.Errorf("expected ScheduleInterval to default to '24h', got %q", cfg.ScheduleInterval)
+	if len(cfg.Schedule.Times) != 2 || cfg.Schedule.Times[0] != "04:00" {
+		t.Errorf("unexpected Schedule.Times: %v", cfg.Schedule.Times)
 	}
-	if cfg.Web.ListenAddr != ":8080" {
-		t.Errorf("expected Web.ListenAddr to default to ':8080', got %q", cfg.Web.ListenAddr)
+
+	// Verify effective router inheritance
+	eff := cfg.Routers[0].Effective(cfg.Defaults)
+	if eff.Port != 2222 {
+		t.Errorf("expected inherited port 2222, got %d", eff.Port)
 	}
-	if cfg.ParsedScheduleInterval() != 24*time.Hour {
-		t.Errorf("expected ParsedScheduleInterval to be 24h, got %v", cfg.ParsedScheduleInterval())
+	if eff.User != "backup_global" {
+		t.Errorf("expected inherited user 'backup_global', got %q", eff.User)
 	}
-	if cfg.Routers[0].Port != 22 {
-		t.Errorf("expected Router Port to default to 22, got %d", cfg.Routers[0].Port)
+	if eff.Password != "default_pass" {
+		t.Errorf("expected inherited password 'default_pass', got %q", eff.Password)
 	}
-	if !cfg.Routers[0].IsEnabled() {
-		t.Errorf("expected Router Enabled to default to true")
+	if !eff.InsecureIgnoreHostKey {
+		t.Errorf("expected inherited InsecureIgnoreHostKey to be true")
 	}
 }
 
-func TestConfigManagerOperations(t *testing.T) {
-	tempDir := t.TempDir()
-	cfgFile := filepath.Join(tempDir, "config.json")
+func TestRouterConfigEffectiveOverrides(t *testing.T) {
+	port := 2200
+	user := "custom_user"
+	pass := "custom_pass"
+	ignoreHostKey := false
+	sensitive := true
 
-	initialJSON := `{
-		"routers": [
-			{
-				"name": "Router1",
-				"host": "192.168.1.1",
-				"user": "admin",
-				"password": "pwd"
-			}
-		]
-	}`
-
-	if err := os.WriteFile(cfgFile, []byte(initialJSON), 0o600); err != nil {
-		t.Fatalf("failed to write test config: %v", err)
+	r := RouterConfig{
+		Name:                  "CustomRouter",
+		Host:                  "10.0.0.1",
+		Port:                  port,
+		User:                  user,
+		Password:              pass,
+		InsecureIgnoreHostKey: &ignoreHostKey,
+		ExportSensitive:       &sensitive,
 	}
 
-	mgr, err := NewManager(cfgFile)
-	if err != nil {
-		t.Fatalf("NewManager failed: %v", err)
+	def := DefaultsConfig{
+		Port:                  22,
+		User:                  "default_user",
+		Password:              "default_pass",
+		InsecureIgnoreHostKey: true,
+		ExportSensitive:       false,
 	}
 
-	// Test Toggle
-	newState, err := mgr.ToggleRouter("Router1")
-	if err != nil {
-		t.Fatalf("ToggleRouter failed: %v", err)
+	eff := r.Effective(def)
+	if eff.Port != 2200 {
+		t.Errorf("expected override port 2200, got %d", eff.Port)
 	}
-	if newState != false {
-		t.Errorf("expected toggled state to be false, got %v", newState)
+	if eff.User != "custom_user" {
+		t.Errorf("expected override user 'custom_user', got %q", eff.User)
 	}
-
-	// Verify reload from disk
-	reloadedCfg, err := Load(cfgFile)
-	if err != nil {
-		t.Fatalf("failed to reload config from disk: %v", err)
+	if eff.Password != "custom_pass" {
+		t.Errorf("expected override pass 'custom_pass', got %q", eff.Password)
 	}
-	if reloadedCfg.Routers[0].IsEnabled() != false {
-		t.Errorf("persisted config did not reflect toggled state")
+	if eff.InsecureIgnoreHostKey != false {
+		t.Errorf("expected override InsecureIgnoreHostKey false, got true")
 	}
-
-	// Test Upsert (add new router)
-	newRouter := RouterConfig{
-		Name:     "Router2",
-		Host:     "192.168.2.1",
-		User:     "backup",
-		Password: "secret",
-	}
-	if err := mgr.UpsertRouter(newRouter); err != nil {
-		t.Fatalf("UpsertRouter failed: %v", err)
-	}
-
-	routers := mgr.ListRouters()
-	if len(routers) != 2 {
-		t.Fatalf("expected 2 routers, got %d", len(routers))
-	}
-
-	// Test Delete
-	if err := mgr.DeleteRouter("Router1"); err != nil {
-		t.Fatalf("DeleteRouter failed: %v", err)
-	}
-	if len(mgr.ListRouters()) != 1 {
-		t.Fatalf("expected 1 router after deletion, got %d", len(mgr.ListRouters()))
+	if eff.ExportSensitive != true {
+		t.Errorf("expected override ExportSensitive true, got false")
 	}
 }

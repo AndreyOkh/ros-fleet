@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,15 +15,46 @@ import (
 
 // Config represents the application configuration.
 type Config struct {
-	BackupDir             string         `json:"backup_dir"`
-	RetentionDays         int            `json:"retention_days"`
-	Concurrency           int            `json:"concurrency"`
-	TimeoutSec            int            `json:"timeout_sec"`
-	ScheduleInterval      string         `json:"schedule_interval"`
-	InsecureIgnoreHostKey bool           `json:"insecure_ignore_host_key"`
-	Web                   WebConfig      `json:"web"`
-	Telegram              TelegramConfig `json:"telegram"`
-	Routers               []RouterConfig `json:"routers"`
+	BackupDir     string         `json:"backup_dir"`
+	StateFile     string         `json:"state_file"`
+	RetentionDays int            `json:"retention_days"`
+	Concurrency   int            `json:"concurrency"`
+	TimeoutSec    int            `json:"timeout_sec"`
+	Schedule      ScheduleConfig `json:"schedule"`
+	Defaults      DefaultsConfig `json:"defaults"`
+	Web           WebConfig      `json:"web"`
+	Git           GitConfig      `json:"git"`
+	Telegram      TelegramConfig `json:"telegram"`
+	Routers       []RouterConfig `json:"routers"`
+}
+
+// ScheduleConfig defines time-of-day execution and timezone.
+type ScheduleConfig struct {
+	Times    []string `json:"times"`
+	Timezone string   `json:"timezone"`
+}
+
+// DefaultsConfig specifies fallback connection and backup parameters.
+type DefaultsConfig struct {
+	Port                  int    `json:"port"`
+	User                  string `json:"user"`
+	Password              string `json:"password,omitempty"`
+	PrivateKeyPath        string `json:"private_key_path,omitempty"`
+	PrivateKeyPassphrase  string `json:"private_key_passphrase,omitempty"`
+	InsecureIgnoreHostKey bool   `json:"insecure_ignore_host_key"`
+	ExportSensitive       bool   `json:"export_sensitive"`
+	EncryptBackup         bool   `json:"encrypt_backup"`
+	BackupPassword        string `json:"backup_password,omitempty"`
+}
+
+// GitConfig holds settings for versioning .rsc configurations in a local Git repository.
+type GitConfig struct {
+	Enabled     bool   `json:"enabled"`
+	RepoDir     string `json:"repo_dir"`
+	Branch      string `json:"branch"`
+	AuthorName  string `json:"author_name"`
+	AuthorEmail string `json:"author_email"`
+	AutoPush    bool   `json:"auto_push"`
 }
 
 // WebConfig holds settings for the built-in HTTP dashboard.
@@ -42,23 +74,40 @@ type TelegramConfig struct {
 	TimeoutSec      int    `json:"timeout_sec,omitempty"`
 }
 
-// RouterConfig contains connection and backup settings for a single MikroTik device.
+// RouterConfig contains connection settings for a single MikroTik device.
+// Pointer fields allow distinguishing between explicitly false and unset (inherited from defaults).
 type RouterConfig struct {
 	Enabled               *bool  `json:"enabled,omitempty"`
 	Name                  string `json:"name"`
 	Host                  string `json:"host"`
-	Port                  int    `json:"port"`
-	User                  string `json:"user"`
+	Port                  int    `json:"port,omitempty"`
+	User                  string `json:"user,omitempty"`
 	Password              string `json:"password,omitempty"`
 	PrivateKeyPath        string `json:"private_key_path,omitempty"`
 	PrivateKeyPassphrase  string `json:"private_key_passphrase,omitempty"`
 	InsecureIgnoreHostKey *bool  `json:"insecure_ignore_host_key,omitempty"`
-	ExportSensitive       bool   `json:"export_sensitive"`
-	EncryptBackup         bool   `json:"encrypt_backup"`
+	ExportSensitive       *bool  `json:"export_sensitive,omitempty"`
+	EncryptBackup         *bool  `json:"encrypt_backup,omitempty"`
 	BackupPassword        string `json:"backup_password,omitempty"`
 }
 
-// IsEnabled returns whether backup is enabled for this router (defaults to true if omitted).
+// EffectiveRouterConfig represents a router configuration with defaults resolved.
+type EffectiveRouterConfig struct {
+	Enabled               bool
+	Name                  string
+	Host                  string
+	Port                  int
+	User                  string
+	Password              string
+	PrivateKeyPath        string
+	PrivateKeyPassphrase  string
+	InsecureIgnoreHostKey bool
+	ExportSensitive       bool
+	EncryptBackup         bool
+	BackupPassword        string
+}
+
+// IsEnabled returns whether backup is enabled for this router (defaults to true).
 func (r RouterConfig) IsEnabled() bool {
 	if r.Enabled == nil {
 		return true
@@ -71,15 +120,77 @@ func (r *RouterConfig) SetEnabled(val bool) {
 	r.Enabled = &val
 }
 
-// ShouldIgnoreHostKey returns router-level host key setting if defined, or global fallback.
-func (r RouterConfig) ShouldIgnoreHostKey(globalFallback bool) bool {
-	if r.InsecureIgnoreHostKey != nil {
-		return *r.InsecureIgnoreHostKey
+// Effective resolves router fields with defaults.
+func (r RouterConfig) Effective(def DefaultsConfig) EffectiveRouterConfig {
+	eff := EffectiveRouterConfig{
+		Enabled: r.IsEnabled(),
+		Name:    r.Name,
+		Host:    r.Host,
+		Port:    22,
 	}
-	return globalFallback
+
+	// Port resolution
+	if r.Port > 0 {
+		eff.Port = r.Port
+	} else if def.Port > 0 {
+		eff.Port = def.Port
+	}
+
+	// User
+	if strings.TrimSpace(r.User) != "" {
+		eff.User = strings.TrimSpace(r.User)
+	} else {
+		eff.User = strings.TrimSpace(def.User)
+	}
+
+	// Password
+	if r.Password != "" {
+		eff.Password = r.Password
+	} else {
+		eff.Password = def.Password
+	}
+
+	// SSH Private Key
+	if r.PrivateKeyPath != "" {
+		eff.PrivateKeyPath = r.PrivateKeyPath
+		eff.PrivateKeyPassphrase = r.PrivateKeyPassphrase
+	} else {
+		eff.PrivateKeyPath = def.PrivateKeyPath
+		eff.PrivateKeyPassphrase = def.PrivateKeyPassphrase
+	}
+
+	// Insecure Ignore Host Key
+	if r.InsecureIgnoreHostKey != nil {
+		eff.InsecureIgnoreHostKey = *r.InsecureIgnoreHostKey
+	} else {
+		eff.InsecureIgnoreHostKey = def.InsecureIgnoreHostKey
+	}
+
+	// Export Sensitive
+	if r.ExportSensitive != nil {
+		eff.ExportSensitive = *r.ExportSensitive
+	} else {
+		eff.ExportSensitive = def.ExportSensitive
+	}
+
+	// Encrypt Backup
+	if r.EncryptBackup != nil {
+		eff.EncryptBackup = *r.EncryptBackup
+	} else {
+		eff.EncryptBackup = def.EncryptBackup
+	}
+
+	// Backup Password
+	if r.BackupPassword != "" {
+		eff.BackupPassword = r.BackupPassword
+	} else {
+		eff.BackupPassword = def.BackupPassword
+	}
+
+	return eff
 }
 
-// Load reads and parses a JSON configuration file from disk, applying defaults and validation.
+// Load reads and parses a JSON configuration file from disk.
 func Load(path string) (*Config, error) {
 	cleanPath := filepath.Clean(path)
 	data, err := os.ReadFile(cleanPath)
@@ -101,10 +212,12 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// applyDefaults fills in reasonable default values for missing configuration fields.
 func (c *Config) applyDefaults() {
 	if strings.TrimSpace(c.BackupDir) == "" {
 		c.BackupDir = "./backups"
+	}
+	if strings.TrimSpace(c.StateFile) == "" {
+		c.StateFile = "./state.json"
 	}
 	if c.Concurrency <= 0 {
 		c.Concurrency = 5
@@ -112,20 +225,35 @@ func (c *Config) applyDefaults() {
 	if c.TimeoutSec <= 0 {
 		c.TimeoutSec = 120
 	}
-	if strings.TrimSpace(c.ScheduleInterval) == "" {
-		c.ScheduleInterval = "24h"
+	if len(c.Schedule.Times) == 0 {
+		c.Schedule.Times = []string{"03:00"}
+	}
+	if strings.TrimSpace(c.Schedule.Timezone) == "" {
+		c.Schedule.Timezone = "Local"
+	}
+	if c.Defaults.Port <= 0 {
+		c.Defaults.Port = 22
 	}
 	if strings.TrimSpace(c.Web.ListenAddr) == "" {
 		c.Web.ListenAddr = ":8080"
+	}
+	if strings.TrimSpace(c.Git.RepoDir) == "" {
+		c.Git.RepoDir = "./git-configs"
+	}
+	if strings.TrimSpace(c.Git.Branch) == "" {
+		c.Git.Branch = "main"
+	}
+	if strings.TrimSpace(c.Git.AuthorName) == "" {
+		c.Git.AuthorName = "ros-fleet"
+	}
+	if strings.TrimSpace(c.Git.AuthorEmail) == "" {
+		c.Git.AuthorEmail = "ros-fleet@local"
 	}
 	if c.Telegram.TimeoutSec <= 0 {
 		c.Telegram.TimeoutSec = 15
 	}
 
 	for i := range c.Routers {
-		if c.Routers[i].Port <= 0 {
-			c.Routers[i].Port = 22
-		}
 		if c.Routers[i].Enabled == nil {
 			defaultEnabled := true
 			c.Routers[i].Enabled = &defaultEnabled
@@ -133,7 +261,7 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// Validate checks configuration sanity and returns descriptive errors for any issues.
+// Validate checks configuration sanity.
 func (c *Config) Validate() error {
 	var errs []string
 
@@ -141,8 +269,25 @@ func (c *Config) Validate() error {
 		errs = append(errs, "at least one router must be defined in 'routers'")
 	}
 
-	if _, err := time.ParseDuration(c.ScheduleInterval); err != nil {
-		errs = append(errs, fmt.Sprintf("invalid 'schedule_interval' %q: %v", c.ScheduleInterval, err))
+	// Validate Schedule
+	tz := strings.TrimSpace(c.Schedule.Timezone)
+	if tz != "" && !strings.EqualFold(tz, "Local") && !strings.EqualFold(tz, "UTC") {
+		if _, err := time.LoadLocation(tz); err != nil {
+			errs = append(errs, fmt.Sprintf("invalid schedule.timezone %q: %v", tz, err))
+		}
+	}
+
+	for _, t := range c.Schedule.Times {
+		parts := strings.Split(strings.TrimSpace(t), ":")
+		if len(parts) != 2 {
+			errs = append(errs, fmt.Sprintf("invalid schedule time %q (must be HH:MM)", t))
+			continue
+		}
+		h, errH := strconv.Atoi(parts[0])
+		m, errM := strconv.Atoi(parts[1])
+		if errH != nil || errM != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+			errs = append(errs, fmt.Sprintf("invalid schedule time %q (hour 00-23, minute 00-59)", t))
+		}
 	}
 
 	if c.Telegram.Enabled {
@@ -170,16 +315,17 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Sprintf("%s: host is required", prefix))
 		}
 
-		if strings.TrimSpace(r.User) == "" {
-			errs = append(errs, fmt.Sprintf("%s: user is required", prefix))
+		eff := r.Effective(c.Defaults)
+		if eff.User == "" {
+			errs = append(errs, fmt.Sprintf("%s: user is required (set in router or defaults)", prefix))
 		}
 
-		if strings.TrimSpace(r.Password) == "" && strings.TrimSpace(r.PrivateKeyPath) == "" {
-			errs = append(errs, fmt.Sprintf("%s: either 'password' or 'private_key_path' must be provided", prefix))
+		if eff.Password == "" && eff.PrivateKeyPath == "" {
+			errs = append(errs, fmt.Sprintf("%s: either password or private_key_path must be provided (set in router or defaults)", prefix))
 		}
 
-		if r.EncryptBackup && strings.TrimSpace(r.BackupPassword) == "" {
-			errs = append(errs, fmt.Sprintf("%s: 'backup_password' is required when 'encrypt_backup' is true", prefix))
+		if eff.EncryptBackup && eff.BackupPassword == "" {
+			errs = append(errs, fmt.Sprintf("%s: backup_password is required when encrypt_backup is true", prefix))
 		}
 	}
 
@@ -190,23 +336,14 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ParsedScheduleInterval returns the duration parsed from ScheduleInterval.
-func (c *Config) ParsedScheduleInterval() time.Duration {
-	d, err := time.ParseDuration(c.ScheduleInterval)
-	if err != nil {
-		return 24 * time.Hour
-	}
-	return d
-}
-
-// Manager coordinates thread-safe access and atomic persistence of the configuration.
+// Manager coordinates thread-safe access and persistence of the configuration.
 type Manager struct {
 	path string
 	mu   sync.RWMutex
 	cfg  *Config
 }
 
-// NewManager loads the configuration from path and initializes a thread-safe Manager.
+// NewManager loads configuration and initializes a thread-safe Manager.
 func NewManager(path string) (*Manager, error) {
 	cfg, err := Load(path)
 	if err != nil {
@@ -224,9 +361,10 @@ func (m *Manager) Get() Config {
 	defer m.mu.RUnlock()
 
 	c := *m.cfg
-	// Copy slice to prevent race conditions
 	c.Routers = make([]RouterConfig, len(m.cfg.Routers))
 	copy(c.Routers, m.cfg.Routers)
+	c.Schedule.Times = make([]string, len(m.cfg.Schedule.Times))
+	copy(c.Schedule.Times, m.cfg.Schedule.Times)
 	return c
 }
 
@@ -253,7 +391,7 @@ func (m *Manager) GetRouter(name string) (RouterConfig, bool) {
 	return RouterConfig{}, false
 }
 
-// ToggleRouter flips the enabled status of a router and atomically persists the config.
+// ToggleRouter flips the enabled status of a router and saves config.
 func (m *Manager) ToggleRouter(name string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -271,21 +409,7 @@ func (m *Manager) ToggleRouter(name string) (bool, error) {
 	return false, fmt.Errorf("router %q not found", name)
 }
 
-// SetRouterEnabled sets the enabled status of a router and atomically persists the config.
-func (m *Manager) SetRouterEnabled(name string, enabled bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for i := range m.cfg.Routers {
-		if m.cfg.Routers[i].Name == name {
-			m.cfg.Routers[i].SetEnabled(enabled)
-			return m.saveLocked()
-		}
-	}
-	return fmt.Errorf("router %q not found", name)
-}
-
-// UpsertRouter adds or updates a router and atomically saves the config.
+// UpsertRouter adds or updates a router and saves config.
 func (m *Manager) UpsertRouter(router RouterConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -296,21 +420,20 @@ func (m *Manager) UpsertRouter(router RouterConfig) error {
 	if strings.TrimSpace(router.Host) == "" {
 		return errors.New("router host is required")
 	}
-	if strings.TrimSpace(router.User) == "" {
-		return errors.New("router user is required")
-	}
-	if router.Port <= 0 {
-		router.Port = 22
-	}
 	if router.Enabled == nil {
 		enabled := true
 		router.Enabled = &enabled
 	}
-	if strings.TrimSpace(router.Password) == "" && strings.TrimSpace(router.PrivateKeyPath) == "" {
-		return errors.New("either password or private_key_path must be provided")
+
+	eff := router.Effective(m.cfg.Defaults)
+	if eff.User == "" {
+		return errors.New("user is required (provide in router or configure defaults)")
 	}
-	if router.EncryptBackup && strings.TrimSpace(router.BackupPassword) == "" {
-		return errors.New("backup_password is required when encrypt_backup is true")
+	if eff.Password == "" && eff.PrivateKeyPath == "" {
+		return errors.New("password or private key path is required")
+	}
+	if eff.EncryptBackup && eff.BackupPassword == "" {
+		return errors.New("backup password is required when encrypt backup is enabled")
 	}
 
 	found := false
@@ -329,7 +452,7 @@ func (m *Manager) UpsertRouter(router RouterConfig) error {
 	return m.saveLocked()
 }
 
-// DeleteRouter removes a router by name and atomically saves the config.
+// DeleteRouter removes a router by name and saves config.
 func (m *Manager) DeleteRouter(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -350,6 +473,27 @@ func (m *Manager) DeleteRouter(name string) error {
 	return m.saveLocked()
 }
 
+// UpdateDefaults updates global defaults and saves config.
+func (m *Manager) UpdateDefaults(def DefaultsConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if def.Port <= 0 {
+		def.Port = 22
+	}
+	m.cfg.Defaults = def
+	return m.saveLocked()
+}
+
+// UpdateSchedule updates schedule times and timezone and saves config.
+func (m *Manager) UpdateSchedule(sched ScheduleConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.cfg.Schedule = sched
+	return m.saveLocked()
+}
+
 // Save atomically writes the current configuration back to disk.
 func (m *Manager) Save() error {
 	m.mu.Lock()
@@ -357,7 +501,6 @@ func (m *Manager) Save() error {
 	return m.saveLocked()
 }
 
-// saveLocked writes the config to a temp file and renames it to target.
 func (m *Manager) saveLocked() error {
 	data, err := json.Marshal(m.cfg, jsontext.WithIndent("  "))
 	if err != nil {

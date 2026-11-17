@@ -39,14 +39,14 @@ type DeviceInfo struct {
 
 // Client handles SSH and SFTP interactions with a MikroTik RouterOS device.
 type Client struct {
-	routerConfig config.RouterConfig
+	routerConfig config.EffectiveRouterConfig
 	sshClient    *ssh.Client
 	sftpClient   *sftp.Client
 	logger       *slog.Logger
 }
 
 // Connect establishes an SSH connection and an SFTP session to the router.
-func Connect(ctx context.Context, router config.RouterConfig, timeout time.Duration, globalInsecureHostKey bool, logger *slog.Logger) (*Client, error) {
+func Connect(ctx context.Context, router config.EffectiveRouterConfig, timeout time.Duration, logger *slog.Logger) (*Client, error) {
 	log := logger.With(slog.String("router", router.Name), slog.String("host", router.Host))
 
 	authMethods, err := buildAuthMethods(router)
@@ -54,7 +54,7 @@ func Connect(ctx context.Context, router config.RouterConfig, timeout time.Durat
 		return nil, fmt.Errorf("auth configuration error for router %q: %w", router.Name, err)
 	}
 
-	hostKeyCallback, err := buildHostKeyCallback(router, globalInsecureHostKey)
+	hostKeyCallback, err := buildHostKeyCallback(router)
 	if err != nil {
 		return nil, fmt.Errorf("host key verification config error for router %q: %w", router.Name, err)
 	}
@@ -143,7 +143,7 @@ func Connect(ctx context.Context, router config.RouterConfig, timeout time.Durat
 }
 
 // buildAuthMethods sets up password and/or private key authentication.
-func buildAuthMethods(r config.RouterConfig) ([]ssh.AuthMethod, error) {
+func buildAuthMethods(r config.EffectiveRouterConfig) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 
 	if r.Password != "" {
@@ -178,8 +178,8 @@ func buildAuthMethods(r config.RouterConfig) ([]ssh.AuthMethod, error) {
 }
 
 // buildHostKeyCallback configures host key checking.
-func buildHostKeyCallback(r config.RouterConfig, globalInsecureHostKey bool) (ssh.HostKeyCallback, error) {
-	if r.ShouldIgnoreHostKey(globalInsecureHostKey) {
+func buildHostKeyCallback(r config.EffectiveRouterConfig) (ssh.HostKeyCallback, error) {
+	if r.InsecureIgnoreHostKey {
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
 

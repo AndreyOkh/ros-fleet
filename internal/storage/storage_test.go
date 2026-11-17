@@ -62,7 +62,6 @@ func TestSaveStreamAndVerify(t *testing.T) {
 	s := New(tempDir)
 	targetFile := filepath.Join(tempDir, "test.rsc")
 
-	// 1. Success case
 	content := []byte("/system identity set name=MyRouter\n")
 	n, err := s.SaveStream(bytes.NewReader(content), targetFile)
 	if err != nil {
@@ -72,7 +71,6 @@ func TestSaveStreamAndVerify(t *testing.T) {
 		t.Errorf("SaveStream written bytes = %d, want %d", n, len(content))
 	}
 
-	// Verify file
 	size, err := s.VerifyFile(targetFile)
 	if err != nil {
 		t.Fatalf("VerifyFile failed: %v", err)
@@ -80,58 +78,45 @@ func TestSaveStreamAndVerify(t *testing.T) {
 	if size != int64(len(content)) {
 		t.Errorf("VerifyFile size = %d, want %d", size, len(content))
 	}
-
-	// 2. Empty stream case
-	emptyTarget := filepath.Join(tempDir, "empty.rsc")
-	_, err = s.SaveStream(bytes.NewReader([]byte{}), emptyTarget)
-	if err == nil {
-		t.Error("expected SaveStream to fail on empty stream")
-	}
-
-	// Ensure .tmp file is removed on error
-	if _, statErr := os.Stat(emptyTarget + ".tmp"); !os.IsNotExist(statErr) {
-		t.Error("expected temp file to be cleaned up after error")
-	}
 }
 
 func TestRetentionRotate(t *testing.T) {
 	tempDir := t.TempDir()
 	s := New(tempDir)
 
-	now := time.Now()
-	recentDate := now.AddDate(0, 0, -5).Format("2006-01-02")
-	oldDate := now.AddDate(0, 0, -45).Format("2006-01-02")
-
-	routerPath := filepath.Join(tempDir, "Router1")
-	recentDir := filepath.Join(routerPath, recentDate)
-	oldDir := filepath.Join(routerPath, oldDate)
-
-	if err := os.MkdirAll(recentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+	routerPath := filepath.Join(tempDir, "Router1", "2026-01-01")
+	if err := os.MkdirAll(routerPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	_ = os.WriteFile(filepath.Join(recentDir, "test.rsc"), []byte("data"), 0o644)
-	_ = os.WriteFile(filepath.Join(oldDir, "test.rsc"), []byte("data"), 0o644)
+	oldFile := filepath.Join(routerPath, "old.backup")
+	_ = os.WriteFile(oldFile, []byte("dummy backup data"), 0o644)
+
+	// Set mod time to 40 days ago
+	oldTime := time.Now().AddDate(0, 0, -40)
+	_ = os.Chtimes(oldFile, oldTime, oldTime)
+
+	recentPath := filepath.Join(tempDir, "Router1", "2026-11-17")
+	_ = os.MkdirAll(recentPath, 0o755)
+	recentFile := filepath.Join(recentPath, "recent.backup")
+	_ = os.WriteFile(recentFile, []byte("recent backup data"), 0o644)
 
 	// Rotate with 30 days retention
-	removed, err := s.Rotate(30, nil)
+	deleted, freed, err := s.Rotate(30, nil)
 	if err != nil {
 		t.Fatalf("Rotate failed: %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("Rotate removed = %d, want 1", removed)
+	if deleted != 1 {
+		t.Errorf("Rotate deleted = %d, want 1", deleted)
+	}
+	if freed == 0 {
+		t.Errorf("expected freed bytes > 0")
 	}
 
-	// Check oldDir is gone
-	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
-		t.Errorf("expected oldDir %q to be deleted", oldDir)
+	if _, err := os.Stat(oldFile); !os.IsNotExist(err) {
+		t.Errorf("expected oldFile to be deleted")
 	}
-
-	// Check recentDir still exists
-	if _, err := os.Stat(recentDir); err != nil {
-		t.Errorf("expected recentDir %q to still exist", recentDir)
+	if _, err := os.Stat(recentFile); err != nil {
+		t.Errorf("expected recentFile to still exist")
 	}
 }

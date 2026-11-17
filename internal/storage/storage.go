@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,17 +14,14 @@ import (
 )
 
 var (
-	// illegalChars matches characters that are unsafe for filenames/directories across Linux/Windows.
 	illegalChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
-	// dateDirPattern matches YYYY-MM-DD directories.
-	dateDirPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
 // DestinationPaths holds generated local file paths for a backup run.
 type DestinationPaths struct {
-	DateDir        string
-	BaseFilename   string
-	LocalRscPath   string
+	DateDir         string
+	BaseFilename    string
+	LocalRscPath    string
 	LocalBackupPath string
 }
 
@@ -127,103 +125,118 @@ func (s *Storage) VerifyFile(path string) (int64, error) {
 	return info.Size(), nil
 }
 
-// Rotate removes backup directories and files older than retentionDays.
-// Returns the count of removed date directories.
-func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, error) {
+// Rotate removes .backup and .rsc files older than retentionDays and cleans up empty folders.
+// It never touches .git or hidden directories.
+func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, int64, error) {
 	if retentionDays <= 0 {
 		if logger != nil {
 			logger.Debug("Retention policy is disabled (retention_days <= 0)")
 		}
-		return 0, nil
+		return 0, 0, nil
 	}
 
 	if _, err := os.Stat(s.baseDir); os.IsNotExist(err) {
-		return 0, nil
+		return 0, 0, nil
 	}
 
-	// Calculate cutoff start of day:
-	now := time.Now()
-	cutoffDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -retentionDays)
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	var deletedFiles int
+	var freedBytes int64
 
-	if logger != nil {
-		logger.Info("Starting backup retention cleanup",
+	// 1. Walk and remove old backup files (.backup, .rsc)
+	err := filepath.WalkDir(s.baseDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+
+		// Skip .git or hidden directories
+		if d.IsDir() {
+			name := d.Name()
+			if strings.HasPrefix(name, ".") || name == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Only check backup files
+		ext := filepath.Ext(path)
+		if ext != ".backup" && ext != ".rsc" {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		if info.ModTime().Before(cutoff) {
+			size := info.Size()
+			if removeErr := os.Remove(path); removeErr == nil {
+				deletedFiles++
+				freedBytes += size
+				if logger != nil {
+					logger.Debug("Deleted expired backup file",
+						slog.String("path", path),
+						slog.Int64("size", size),
+						slog.Time("mod_time", info.ModTime()),
+					)
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil && logger != nil {
+		logger.Warn("Error during retention file walk", slog.Any("error", err))
+	}
+
+	// 2. Clean up empty subdirectories
+	s.cleanEmptyDirectories(s.baseDir)
+
+	if deletedFiles > 0 && logger != nil {
+		logger.Info("Backup retention rotation completed",
 			slog.Int("retention_days", retentionDays),
-			slog.String("cutoff_date", cutoffDate.Format("2006-01-02")),
+			slog.Int("deleted_files", deletedFiles),
+			slog.String("freed_space", formatBytes(freedBytes)),
 		)
 	}
 
-	routerEntries, err := os.ReadDir(s.baseDir)
+	return deletedFiles, freedBytes, nil
+}
+
+// cleanEmptyDirectories traverses bottom-up and removes empty directories (except baseDir and .git).
+func (s *Storage) cleanEmptyDirectories(dir string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read backup base directory %q: %w", s.baseDir, err)
+		return
 	}
 
-	removedCount := 0
-
-	for _, routerEntry := range routerEntries {
-		if !routerEntry.IsDir() {
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-
-		routerPath := filepath.Join(s.baseDir, routerEntry.Name())
-		dateEntries, err := os.ReadDir(routerPath)
-		if err != nil {
-			if logger != nil {
-				logger.Warn("Failed to read router directory for rotation",
-					slog.String("path", routerPath),
-					slog.Any("error", err),
-				)
-			}
-			continue
-		}
-
-		remainingSubdirs := 0
-		for _, dateEntry := range dateEntries {
-			subPath := filepath.Join(routerPath, dateEntry.Name())
-
-			if dateEntry.IsDir() && dateDirPattern.MatchString(dateEntry.Name()) {
-				entryDate, parseErr := time.Parse("2006-01-02", dateEntry.Name())
-				if parseErr == nil && entryDate.Before(cutoffDate) {
-					if logger != nil {
-						logger.Info("Removing expired backup directory",
-							slog.String("router", routerEntry.Name()),
-							slog.String("date", dateEntry.Name()),
-							slog.String("path", subPath),
-						)
-					}
-					if removeErr := os.RemoveAll(subPath); removeErr != nil {
-						if logger != nil {
-							logger.Error("Failed to delete expired backup directory",
-								slog.String("path", subPath),
-								slog.Any("error", removeErr),
-							)
-						}
-						remainingSubdirs++
-					} else {
-						removedCount++
-					}
-					continue
-				}
-			}
-
-			// Also check individual files if any were left outside date directories
-			info, statErr := dateEntry.Info()
-			if statErr == nil && !dateEntry.IsDir() {
-				if info.ModTime().Before(cutoffDate) {
-					_ = os.Remove(subPath)
-					continue
-				}
-			}
-
-			remainingSubdirs++
-		}
-
-		// Clean up empty router directory if no backups remain
-		if remainingSubdirs == 0 {
-			if err := os.Remove(routerPath); err == nil && logger != nil {
-				logger.Debug("Removed empty router directory", slog.String("path", routerPath))
-			}
-		}
+		subDir := filepath.Join(dir, entry.Name())
+		s.cleanEmptyDirectories(subDir)
 	}
 
-	return removedCount, nil
+	if dir != s.baseDir {
+		rem, err := os.ReadDir(dir)
+		if err == nil && len(rem) == 0 {
+			_ = os.Remove(dir)
+		}
+	}
+}
+
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }

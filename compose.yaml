@@ -10,7 +10,9 @@ services:
       - "8080:8080"
     volumes:
       - ./config.json:/app/config.json:rw
+      - ./state.json:/app/state.json:rw
       - ./backups:/app/backups:rw
+      - ./git-configs:/app/git-configs:rw
 #      - ~/.ssh:/home/rosfleet/.ssh:ro
     environment:
       - TZ=Europe/Moscow

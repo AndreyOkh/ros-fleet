@@ -1,0 +1,82 @@
+<div class="modal-overlay" id="defaults-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 class="modal-title">⚙️ Глобальные настройки подключения (defaults)</h3>
+      <button class="close-btn" onclick="document.getElementById('modal-container').innerHTML = ''">&times;</button>
+    </div>
+
+    <form hx-post="/settings/defaults"
+          hx-target="#routers-table-container"
+          hx-swap="innerHTML"
+          onsubmit="setTimeout(() => { document.getElementById('modal-container').innerHTML = ''; }, 300)">
+
+      <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
+        Эти параметры автоматически наследуются всеми устройствами, если в конфигурации конкретного роутера поле оставлено пустым.
+      </p>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="def_port">SSH Порт по умолчанию</label>
+          <input type="number" id="def_port" name="port" value="{{if gt .Defaults.Port 0}}{{.Defaults.Port}}{{else}}22{{end}}" required>
+        </div>
+
+        <div class="form-group">
+          <label for="def_user">SSH Пользователь по умолчанию</label>
+          <input type="text" id="def_user" name="user" value="{{.Defaults.User}}" placeholder="backup_user">
+        </div>
+
+        <div class="form-group full-width">
+          <label for="def_password">Пароль по умолчанию</label>
+          <input type="password" id="def_password" name="password" value="{{.Defaults.Password}}" placeholder="••••••••">
+        </div>
+
+        <div class="form-group">
+          <label for="def_private_key_path">Путь к SSH-ключу по умолчанию</label>
+          <input type="text" id="def_private_key_path" name="private_key_path" value="{{.Defaults.PrivateKeyPath}}" placeholder="/root/.ssh/id_ed25519">
+        </div>
+
+        <div class="form-group">
+          <label for="def_private_key_passphrase">Пароль от ключа по умолчанию</label>
+          <input type="password" id="def_private_key_passphrase" name="private_key_passphrase" value="{{.Defaults.PrivateKeyPassphrase}}" placeholder="Опционально">
+        </div>
+
+        <div class="form-group full-width">
+          <label class="checkbox-group">
+            <input type="checkbox" name="insecure_ignore_host_key" value="true" {{if .Defaults.InsecureIgnoreHostKey}}checked{{end}}>
+            <span>Отключать проверку HostKey по умолчанию (для локальных сетей)</span>
+          </label>
+        </div>
+
+        <div class="form-group full-width">
+          <label class="checkbox-group">
+            <input type="checkbox" name="export_sensitive" value="true" {{if .Defaults.ExportSensitive}}checked{{end}}>
+            <span>Включать чувствительные данные в .rsc по умолчанию (show-sensitive для RouterOS v7)</span>
+          </label>
+        </div>
+
+        <div class="form-group full-width">
+          <label class="checkbox-group">
+            <input type="checkbox" id="def_encrypt_backup" name="encrypt_backup" value="true"
+                   {{if .Defaults.EncryptBackup}}checked{{end}}
+                   onchange="document.getElementById('def_backup_pwd_group').style.display = this.checked ? 'block' : 'none'">
+            <span>Шифровать бинарный .backup по умолчанию</span>
+          </label>
+        </div>
+
+        <div class="form-group full-width" id="def_backup_pwd_group" style="display: {{if .Defaults.EncryptBackup}}block{{else}}none{{end}};">
+          <label for="def_backup_password">Пароль шифрования бэкапа по умолчанию</label>
+          <input type="password" id="def_backup_password" name="backup_password" value="{{.Defaults.BackupPassword}}" placeholder="Пароль для шифрования .backup">
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML = ''">
+          Отмена
+        </button>
+        <button type="submit" class="btn btn-primary">
+          Сохранить настройки по умолчанию
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

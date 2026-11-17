@@ -19,14 +19,14 @@
         <span class="badge badge-neutral" style="font-size: 10px;">Отключен</span>
       {{end}}
     </div>
-    <div class="device-host">{{.Router.Host}}:{{.Router.Port}}</div>
+    <div class="device-host">{{.Effective.Host}}:{{.Effective.Port}}</div>
   </td>
 
   <!-- Модель и версия RouterOS -->
   <td>
     <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
       <span class="badge badge-model">{{.State.Model}}</span>
-      <span class="badge badge-version">v{{.State.Version}}</span>
+      <span class="badge badge-version">v{{.State.Firmware}}</span>
     </div>
   </td>
 
@@ -41,15 +41,15 @@
         ✓ Успешно
       </span>
       <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
-        {{if not .State.LastBackupTime.IsZero}}{{.State.LastBackupTime.Format "02.01 15:04:05"}}{{end}}
+        {{if not .State.LastBackupAt.IsZero}}{{.State.LastBackupAt.Format "02.01 15:04:05"}}{{end}}
         {{if gt .State.LastBackupRscSize 0}}• RSC: {{formatBytes .State.LastBackupRscSize}}{{end}}
       </div>
     {{else if eq .State.Status "error"}}
-      <span class="badge badge-danger" data-tooltip="{{.State.LastBackupError}}">
+      <span class="badge badge-danger" data-tooltip="{{.State.LastError}}">
         ✕ Ошибка
       </span>
       <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
-        {{if not .State.LastBackupTime.IsZero}}{{.State.LastBackupTime.Format "02.01 15:04:05"}}{{end}}
+        {{if not .State.LastBackupAt.IsZero}}{{.State.LastBackupAt.Format "02.01 15:04:05"}}{{end}}
       </div>
     {{else}}
       <span class="badge badge-neutral">Не запускался</span>

@@ -27,8 +27,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 # Stage 2: Minimal runtime image
 FROM alpine:3.21
 
-# Install CA certificates and tzdata for proper TLS and time handling
-RUN apk add --no-cache ca-certificates tzdata && \
+# Install CA certificates, tzdata, git and openssh-client for runtime operations
+RUN apk add --no-cache ca-certificates tzdata git openssh-client && \
     addgroup -g 1000 rosfleet && \
     adduser -u 1000 -G rosfleet -s /bin/sh -D rosfleet
 
@@ -38,13 +38,13 @@ WORKDIR /app
 COPY --from=builder /bin/ros-fleet /usr/local/bin/ros-fleet
 
 # Prepare directories
-RUN mkdir -p /app/backups && chown -R rosfleet:rosfleet /app
+RUN mkdir -p /app/backups /app/git-configs && chown -R rosfleet:rosfleet /app
 
 USER rosfleet
 
 EXPOSE 8080
 
-VOLUME ["/app/backups"]
+VOLUME ["/app/backups", "/app/git-configs"]
 
 ENTRYPOINT ["/usr/local/bin/ros-fleet"]
 CMD ["-config", "/app/config.json"]

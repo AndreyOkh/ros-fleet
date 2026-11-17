@@ -1,6 +1,9 @@
 bin/
 backups/
 config.json
+state.json
+git-configs/
 *.tmp
 *.log
 .idea/
+id_*

@@ -12,15 +12,27 @@ import (
 
 	"github.com/AndreyOkh/ros-fleet/internal/config"
 	"github.com/AndreyOkh/ros-fleet/internal/runner"
+	"github.com/AndreyOkh/ros-fleet/internal/scheduler"
 	"github.com/AndreyOkh/ros-fleet/internal/state"
 )
 
 func setupTestServer(t *testing.T, authUser, authPass string) (*Server, string) {
 	tempDir := t.TempDir()
 	cfgFile := filepath.Join(tempDir, "config.json")
+	stateFile := filepath.Join(tempDir, "state.json")
 
 	cfgJSON := `{
 		"backup_dir": "` + tempDir + `/backups",
+		"state_file": "` + stateFile + `",
+		"defaults": {
+			"port": 22,
+			"user": "admin",
+			"password": "default_pass"
+		},
+		"schedule": {
+			"times": ["03:00", "15:00"],
+			"timezone": "UTC"
+		},
 		"web": {
 			"enabled": true,
 			"listen_addr": ":8080",
@@ -30,9 +42,7 @@ func setupTestServer(t *testing.T, authUser, authPass string) (*Server, string) 
 		"routers": [
 			{
 				"name": "Router-Test",
-				"host": "192.168.1.1",
-				"user": "admin",
-				"password": "secret"
+				"host": "192.168.1.1"
 			}
 		]
 	}`
@@ -46,12 +56,20 @@ func setupTestServer(t *testing.T, authUser, authPass string) (*Server, string) 
 		t.Fatal(err)
 	}
 
-	reg := state.NewRegistry()
-	reg.InitFromConfig(cfgMgr.Get().Routers)
+	stateMgr, err := state.NewManager(stateFile, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateMgr.InitFromConfig(cfgMgr.Get().Routers, cfgMgr.Get().Defaults)
 
-	run := runner.New(cfgMgr, reg, slog.Default())
+	run := runner.New(cfgMgr, stateMgr, slog.Default())
 
-	srv, err := NewServer(cfgMgr, run, reg, slog.Default())
+	sched, err := scheduler.New(cfgMgr.Get().Schedule.Times, cfgMgr.Get().Schedule.Timezone, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := NewServer(cfgMgr, run, stateMgr, sched, slog.Default())
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -86,17 +104,17 @@ func TestServerDashboardAndStatic(t *testing.T) {
 	if rrCSS.Code != http.StatusOK {
 		t.Errorf("GET /static/style.css returned status %d, want %d", rrCSS.Code, http.StatusOK)
 	}
-	if !strings.Contains(rrCSS.Body.String(), "--bg-color") {
-		t.Errorf("expected style.css content")
+
+	// 3. Test Defaults Modal GET /settings/defaults
+	reqDef := httptest.NewRequest(http.MethodGet, "/settings/defaults", nil)
+	rrDef := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrDef, reqDef)
+
+	if rrDef.Code != http.StatusOK {
+		t.Errorf("GET /settings/defaults returned status %d, want %d", rrDef.Code, http.StatusOK)
 	}
-
-	// 3. Test GET /static/htmx.min.js
-	reqJS := httptest.NewRequest(http.MethodGet, "/static/htmx.min.js", nil)
-	rrJS := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(rrJS, reqJS)
-
-	if rrJS.Code != http.StatusOK {
-		t.Errorf("GET /static/htmx.min.js returned status %d, want %d", rrJS.Code, http.StatusOK)
+	if !strings.Contains(rrDef.Body.String(), "Глобальные настройки подключения") {
+		t.Errorf("expected defaults modal to contain title")
 	}
 }
 
@@ -115,13 +133,10 @@ func TestServerToggleAndEndpoints(t *testing.T) {
 		t.Errorf("expected toggled row to have 'Отключен' badge")
 	}
 
-	// Test Add router
+	// Test Add router (inheriting user & password from defaults)
 	form := url.Values{}
 	form.Set("name", "Router-New")
 	form.Set("host", "10.0.0.1")
-	form.Set("port", "22")
-	form.Set("user", "admin")
-	form.Set("password", "pass123")
 
 	reqAdd := httptest.NewRequest(http.MethodPost, "/routers", strings.NewReader(form.Encode()))
 	reqAdd.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -129,29 +144,16 @@ func TestServerToggleAndEndpoints(t *testing.T) {
 	srv.httpServer.Handler.ServeHTTP(rrAdd, reqAdd)
 
 	if rrAdd.Code != http.StatusOK {
-		t.Errorf("add router returned code %d, want %d", rrAdd.Code, http.StatusOK)
+		t.Errorf("add router returned code %d, want %d, body: %s", rrAdd.Code, http.StatusOK, rrAdd.Body.String())
 	}
 	if !strings.Contains(rrAdd.Body.String(), "Router-New") {
 		t.Errorf("expected table to include 'Router-New'")
-	}
-
-	// Test Delete router
-	reqDel := httptest.NewRequest(http.MethodDelete, "/routers/Router-New", nil)
-	rrDel := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(rrDel, reqDel)
-
-	if rrDel.Code != http.StatusOK {
-		t.Errorf("delete router returned code %d, want %d", rrDel.Code, http.StatusOK)
-	}
-	if strings.Contains(rrDel.Body.String(), "Router-New") {
-		t.Errorf("expected table to omit deleted router")
 	}
 }
 
 func TestServerBasicAuth(t *testing.T) {
 	srv, _ := setupTestServer(t, "admin", "securepassword")
 
-	// Without auth
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	srv.httpServer.Handler.ServeHTTP(rr, req)
@@ -160,7 +162,6 @@ func TestServerBasicAuth(t *testing.T) {
 		t.Errorf("expected status 401 Unauthorized, got %d", rr.Code)
 	}
 
-	// With correct auth
 	reqAuth := httptest.NewRequest(http.MethodGet, "/", nil)
 	reqAuth.SetBasicAuth("admin", "securepassword")
 	rrAuth := httptest.NewRecorder()

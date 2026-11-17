@@ -25,15 +25,21 @@
     <div class="kpi-value" style="color: {{if gt .FailedCount 0}}var(--warning-color){{else}}var(--success-color){{end}};">
       {{.SuccessCount}}
     </div>
-    <div class="kpi-subtitle">{{if gt .FailedCount 0}}<span style="color: var(--danger-color);">{{.FailedCount}} с ошибками</span>{{else}}Все бэкапы актуальны{{end}}</div>
+    <div class="kpi-subtitle">
+      {{if gt .FailedCount 0}}
+        <span style="color: var(--danger-color);">{{.FailedCount}} с ошибками</span>
+      {{else}}
+        Все бэкапы актуальны
+      {{end}}
+    </div>
   </div>
 
   <div class="kpi-card">
     <div class="kpi-header">
-      <span class="kpi-title">Планировщик</span>
+      <span class="kpi-title">Следующий запуск</span>
       <span class="kpi-icon">⏱</span>
     </div>
-    <div class="kpi-value" style="font-size: 20px;">{{.Interval}}</div>
-    <div class="kpi-subtitle">Интервал автозапуска</div>
+    <div class="kpi-value" style="font-size: 16px; font-weight: 600;">{{.NextRun}}</div>
+    <div class="kpi-subtitle">Время: {{.ScheduleTimes}} ({{.Timezone}})</div>
   </div>
 </div>

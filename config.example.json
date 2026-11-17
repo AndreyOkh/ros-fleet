@@ -1,10 +1,35 @@
 {
   "backup_dir": "./backups",
+  "state_file": "./state.json",
   "retention_days": 30,
   "concurrency": 5,
   "timeout_sec": 120,
-  "schedule_interval": "24h",
-  "insecure_ignore_host_key": true,
+  "schedule": {
+    "times": [
+      "03:00",
+      "15:00"
+    ],
+    "timezone": "Europe/Moscow"
+  },
+  "defaults": {
+    "port": 22,
+    "user": "backup_user",
+    "password": "",
+    "private_key_path": "/home/user/.ssh/id_ed25519",
+    "private_key_passphrase": "",
+    "insecure_ignore_host_key": true,
+    "export_sensitive": true,
+    "encrypt_backup": false,
+    "backup_password": ""
+  },
+  "git": {
+    "enabled": true,
+    "repo_dir": "./git-configs",
+    "branch": "main",
+    "author_name": "ros-fleet",
+    "author_email": "ros-fleet@local",
+    "auto_push": false
+  },
   "web": {
     "enabled": true,
     "listen_addr": ":8080",
@@ -12,22 +37,17 @@
     "auth_password": ""
   },
   "telegram": {
-    "enabled": true,
+    "enabled": false,
     "bot_token": "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ",
     "chat_id": "-1001234567890",
-    "notify_on_success": true
+    "notify_on_success": true,
+    "timeout_sec": 15
   },
   "routers": [
     {
       "enabled": true,
       "name": "Router-Core-CCR2004",
       "host": "192.168.1.1",
-      "port": 22,
-      "user": "backup_user",
-      "private_key_path": "/home/user/.ssh/id_ed25519",
-      "private_key_passphrase": "",
-      "insecure_ignore_host_key": true,
-      "export_sensitive": true,
       "encrypt_backup": true,
       "backup_password": "SuperSecretBackupPassword123!"
     },

@@ -12,6 +12,7 @@ import (
 
 	"github.com/AndreyOkh/ros-fleet/internal/config"
 	"github.com/AndreyOkh/ros-fleet/internal/runner"
+	"github.com/AndreyOkh/ros-fleet/internal/scheduler"
 	"github.com/AndreyOkh/ros-fleet/internal/state"
 	"github.com/AndreyOkh/ros-fleet/web"
 )
@@ -21,15 +22,17 @@ type Server struct {
 	httpServer *http.Server
 	cfgMgr     *config.Manager
 	runner     *runner.Runner
-	registry   *state.Registry
+	stateMgr   *state.StateManager
+	scheduler  *scheduler.Scheduler
 	logger     *slog.Logger
 	templates  *template.Template
 }
 
-// TableRowData combines configuration and live state for a single table row.
+// TableRowData combines configuration, effective resolved settings, and live state.
 type TableRowData struct {
-	Router config.RouterConfig
-	State  state.DeviceState
+	Router    config.RouterConfig
+	Effective config.EffectiveRouterConfig
+	State     state.DeviceState
 }
 
 // TableData contains all rows for the main device table.
@@ -39,11 +42,13 @@ type TableData struct {
 
 // SummaryData contains KPI card stats for the dashboard header.
 type SummaryData struct {
-	TotalCount   int
-	ActiveCount  int
-	SuccessCount int
-	FailedCount  int
-	Interval     string
+	TotalCount    int
+	ActiveCount   int
+	SuccessCount  int
+	FailedCount   int
+	NextRun       string
+	ScheduleTimes string
+	Timezone      string
 }
 
 // IndexData is passed to the main index.html template.
@@ -54,12 +59,18 @@ type IndexData struct {
 
 // ModalData is passed to the router add/edit modal template.
 type ModalData struct {
-	IsEdit bool
-	Router config.RouterConfig
+	IsEdit   bool
+	Router   config.RouterConfig
+	Defaults config.DefaultsConfig
+}
+
+// DefaultsModalData is passed to the defaults modal template.
+type DefaultsModalData struct {
+	Defaults config.DefaultsConfig
 }
 
 // NewServer initializes the HTTP server, parses templates, and registers routes.
-func NewServer(cfgMgr *config.Manager, runner *runner.Runner, registry *state.Registry, logger *slog.Logger) (*Server, error) {
+func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.StateManager, sched *scheduler.Scheduler, logger *slog.Logger) (*Server, error) {
 	log := logger.With(slog.String("component", "web_server"))
 
 	tmplFuncs := template.FuncMap{
@@ -80,7 +91,8 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, registry *state.Re
 	s := &Server{
 		cfgMgr:    cfgMgr,
 		runner:    runner,
-		registry:  registry,
+		stateMgr:  stateMgr,
+		scheduler: sched,
 		logger:    log,
 		templates: tmpl,
 	}
@@ -99,6 +111,10 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, registry *state.Re
 	mux.HandleFunc("GET /dashboard/summary", s.handleSummaryCards)
 	mux.HandleFunc("GET /routers/table", s.handleTable)
 
+	// Global settings routes
+	mux.HandleFunc("GET /settings/defaults", s.handleSettingsDefaultsModal)
+	mux.HandleFunc("POST /settings/defaults", s.handleSaveDefaults)
+
 	// Router management routes
 	mux.HandleFunc("GET /routers/new", s.handleNewRouterModal)
 	mux.HandleFunc("GET /routers/{name}/edit", s.handleEditRouterModal)
@@ -114,7 +130,6 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, registry *state.Re
 	cfg := cfgMgr.Get()
 	var handler http.Handler = mux
 
-	// Basic Auth middleware if configured
 	if cfg.Web.AuthUser != "" && cfg.Web.AuthPassword != "" {
 		handler = basicAuthMiddleware(cfg.Web.AuthUser, cfg.Web.AuthPassword, mux)
 		log.Info("Basic Auth enabled for web dashboard", slog.String("user", cfg.Web.AuthUser))
@@ -175,10 +190,54 @@ func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
 	_ = s.templates.ExecuteTemplate(w, "table_container.html", table)
 }
 
+func (s *Server) handleSettingsDefaultsModal(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgMgr.Get()
+	data := DefaultsModalData{
+		Defaults: cfg.Defaults,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.templates.ExecuteTemplate(w, "defaults_modal.html", data)
+}
+
+func (s *Server) handleSaveDefaults(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	port, _ := strconv.Atoi(r.FormValue("port"))
+	if port <= 0 {
+		port = 22
+	}
+
+	def := config.DefaultsConfig{
+		Port:                  port,
+		User:                  strings.TrimSpace(r.FormValue("user")),
+		Password:              strings.TrimSpace(r.FormValue("password")),
+		PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
+		PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
+		InsecureIgnoreHostKey: r.FormValue("insecure_ignore_host_key") == "true",
+		ExportSensitive:       r.FormValue("export_sensitive") == "true",
+		EncryptBackup:         r.FormValue("encrypt_backup") == "true",
+		BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
+	}
+
+	if err := s.cfgMgr.UpdateDefaults(def); err != nil {
+		s.logger.Error("Failed to update defaults", slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.logger.Info("Global defaults updated via Web UI")
+	s.handleTable(w, r)
+}
+
 func (s *Server) handleNewRouterModal(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgMgr.Get()
 	data := ModalData{
-		IsEdit: false,
-		Router: config.RouterConfig{Port: 22, User: "admin"},
+		IsEdit:   false,
+		Router:   config.RouterConfig{},
+		Defaults: cfg.Defaults,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
@@ -192,9 +251,11 @@ func (s *Server) handleEditRouterModal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cfg := s.cfgMgr.Get()
 	data := ModalData{
-		IsEdit: true,
-		Router: rc,
+		IsEdit:   true,
+		Router:   rc,
+		Defaults: cfg.Defaults,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
@@ -207,13 +268,19 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	port, _ := strconv.Atoi(r.FormValue("port"))
-	if port <= 0 {
-		port = 22
-	}
 
-	insecureIgnore := r.FormValue("insecure_ignore_host_key") == "true"
-	exportSensitive := r.FormValue("export_sensitive") == "true"
-	encryptBackup := r.FormValue("encrypt_backup") == "true"
+	parseOptionalBool := func(val string) *bool {
+		switch val {
+		case "true":
+			b := true
+			return &b
+		case "false":
+			b := false
+			return &b
+		default:
+			return nil
+		}
+	}
 
 	router := config.RouterConfig{
 		Name:                  strings.TrimSpace(r.FormValue("name")),
@@ -223,9 +290,9 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 		Password:              strings.TrimSpace(r.FormValue("password")),
 		PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
 		PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
-		InsecureIgnoreHostKey: &insecureIgnore,
-		ExportSensitive:       exportSensitive,
-		EncryptBackup:         encryptBackup,
+		InsecureIgnoreHostKey: parseOptionalBool(r.FormValue("insecure_ignore_host_key")),
+		ExportSensitive:       parseOptionalBool(r.FormValue("export_sensitive")),
+		EncryptBackup:         parseOptionalBool(r.FormValue("encrypt_backup")),
 		BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
 	}
 
@@ -235,7 +302,6 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Re-render table
 	s.handleTable(w, r)
 }
 
@@ -255,9 +321,7 @@ func (s *Server) handleBackupSingle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	s.logger.Info("Manual backup triggered via Web UI", slog.String("router", name))
 
-	// Run backup in request context
 	_, _ = s.runner.RunSingle(r.Context(), name)
-
 	s.renderSingleRow(w, name)
 }
 
@@ -266,7 +330,6 @@ func (s *Server) handleRefreshSingle(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Device telemetry refresh triggered via Web UI", slog.String("router", name))
 
 	_, _ = s.runner.RefreshDevice(r.Context(), name)
-
 	s.renderSingleRow(w, name)
 }
 
@@ -284,7 +347,6 @@ func (s *Server) handleDeleteRouter(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBackupAll(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Backup all triggered via Web UI")
 	_, _ = s.runner.Run(r.Context())
-
 	s.handleTable(w, r)
 }
 
@@ -295,8 +357,13 @@ func (s *Server) renderSingleRow(w http.ResponseWriter, name string) {
 		return
 	}
 
-	st, _ := s.registry.Get(name)
-	row := TableRowData{Router: rc, State: st}
+	cfg := s.cfgMgr.Get()
+	st, _ := s.stateMgr.Get(name)
+	row := TableRowData{
+		Router:    rc,
+		Effective: rc.Effective(cfg.Defaults),
+		State:     st,
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "table_row.html", row); err != nil {
@@ -306,25 +373,27 @@ func (s *Server) renderSingleRow(w http.ResponseWriter, name string) {
 }
 
 func (s *Server) buildTableData() TableData {
+	cfg := s.cfgMgr.Get()
 	routers := s.cfgMgr.ListRouters()
-	states := s.registry.GetAll()
+	states := s.stateMgr.GetAll()
 
 	items := make([]TableRowData, 0, len(routers))
 	for _, r := range routers {
 		st, exists := states[r.Name]
 		if !exists {
 			st = state.DeviceState{
-				Name:    r.Name,
-				Host:    r.Host,
-				Port:    r.Port,
-				Model:   "Unknown",
-				Version: "Unknown",
-				Status:  state.StatusNeverRun,
+				Name:     r.Name,
+				Host:     r.Host,
+				Port:     r.Port,
+				Model:    "Unknown",
+				Firmware: "Unknown",
+				Status:   state.StatusNeverRun,
 			}
 		}
 		items = append(items, TableRowData{
-			Router: r,
-			State:  st,
+			Router:    r,
+			Effective: r.Effective(cfg.Defaults),
+			State:     st,
 		})
 	}
 	return TableData{Items: items}
@@ -332,7 +401,7 @@ func (s *Server) buildTableData() TableData {
 
 func (s *Server) buildSummaryData() SummaryData {
 	cfg := s.cfgMgr.Get()
-	states := s.registry.GetAll()
+	states := s.stateMgr.GetAll()
 
 	activeCount := 0
 	for _, r := range cfg.Routers {
@@ -351,12 +420,24 @@ func (s *Server) buildSummaryData() SummaryData {
 		}
 	}
 
+	nextRunStr := "Расписание не задано"
+	if s.scheduler != nil {
+		nextRunStr = s.scheduler.NextRunFormatted()
+	}
+
+	timesStr := strings.Join(cfg.Schedule.Times, ", ")
+	if timesStr == "" {
+		timesStr = "не задано"
+	}
+
 	return SummaryData{
-		TotalCount:   len(cfg.Routers),
-		ActiveCount:  activeCount,
-		SuccessCount: successCount,
-		FailedCount:  failedCount,
-		Interval:     cfg.ScheduleInterval,
+		TotalCount:    len(cfg.Routers),
+		ActiveCount:   activeCount,
+		SuccessCount:  successCount,
+		FailedCount:   failedCount,
+		NextRun:       nextRunStr,
+		ScheduleTimes: timesStr,
+		Timezone:      cfg.Schedule.Timezone,
 	}
 }
 
