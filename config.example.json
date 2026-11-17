@@ -1,0 +1,48 @@
+{
+  "backup_dir": "./backups",
+  "retention_days": 30,
+  "concurrency": 5,
+  "timeout_sec": 120,
+  "schedule_interval": "24h",
+  "insecure_ignore_host_key": true,
+  "telegram": {
+    "enabled": true,
+    "bot_token": "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ",
+    "chat_id": "-1001234567890",
+    "notify_on_success": true
+  },
+  "routers": [
+    {
+      "name": "Router-Core-CCR2004",
+      "host": "192.168.1.1",
+      "port": 22,
+      "user": "backup_user",
+      "private_key_path": "/home/user/.ssh/id_ed25519",
+      "private_key_passphrase": "",
+      "insecure_ignore_host_key": true,
+      "export_sensitive": true,
+      "encrypt_backup": true,
+      "backup_password": "SuperSecretBackupPassword123!"
+    },
+    {
+      "name": "Router-Office-RB4011",
+      "host": "192.168.10.1",
+      "port": 22,
+      "user": "backup_user",
+      "password": "RouterPasswordExample",
+      "insecure_ignore_host_key": true,
+      "export_sensitive": true,
+      "encrypt_backup": false
+    },
+    {
+      "name": "Router-Warehouse-v6",
+      "host": "10.50.0.1",
+      "port": 2222,
+      "user": "admin",
+      "password": "LegacyPasswordExample",
+      "insecure_ignore_host_key": true,
+      "export_sensitive": false,
+      "encrypt_backup": false
+    }
+  ]
+}

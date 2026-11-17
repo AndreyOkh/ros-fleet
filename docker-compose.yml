@@ -1,0 +1,14 @@
+services:
+  mikrotik-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mikrotik-backup
+    restart: unless-stopped
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./backups:/app/backups:rw
+      - ~/.ssh:/home/backup/.ssh:ro
+    environment:
+      - TZ=Europe/Moscow
+    command: ["-config", "/app/config.json"]

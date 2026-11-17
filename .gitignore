@@ -1,0 +1,5 @@
+bin/
+backups/
+config.json
+*.tmp
+*.log
