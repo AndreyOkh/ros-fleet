@@ -526,3 +526,62 @@ input:focus {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
+
+/* Git Status Widget */
+.git-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+.git-status-badge.git-ok {
+  border-color: rgba(16, 185, 129, 0.4);
+}
+.git-status-badge.git-error {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: var(--danger-bg);
+  color: var(--danger-color);
+}
+.git-status-badge.git-disabled {
+  opacity: 0.6;
+}
+.git-branch {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.git-hash {
+  font-family: monospace;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+.git-time {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.git-push-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.git-push-ok {
+  background: var(--success-bg);
+  color: var(--success-color);
+}
+.git-push-err {
+  background: var(--danger-bg);
+  color: var(--danger-color);
+}
+.git-push-idle, .git-push-local {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}

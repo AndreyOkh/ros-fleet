@@ -3,8 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -24,6 +24,7 @@ type Runner struct {
 	stateMgr *state.StateManager
 	gitRepo  *gitrepo.GitRepository
 	logger   *slog.Logger
+	mu       sync.Mutex
 }
 
 // New creates a new Runner instance.
@@ -31,19 +32,39 @@ func New(cfgMgr *config.Manager, stateMgr *state.StateManager, logger *slog.Logg
 	cfg := cfgMgr.Get()
 	return &Runner{
 		cfgMgr:   cfgMgr,
-		storage:  storage.New(cfg.BackupDir),
+		storage:  storage.New(cfg.BinaryBackupDir, cfg.ExportDir),
 		notifier: notifier.NewTelegramNotifier(cfg.Telegram, logger),
 		stateMgr: stateMgr,
-		gitRepo:  gitrepo.New(cfg.Git, logger),
+		gitRepo:  gitrepo.New(cfg.ExportDir, cfg.Git, logger),
 		logger:   logger.With(slog.String("component", "runner")),
 	}
+}
+
+// GitStatus returns a snapshot of current Git repository status.
+func (r *Runner) GitStatus() gitrepo.GitStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.gitRepo == nil {
+		return gitrepo.GitStatus{}
+	}
+	return r.gitRepo.GetStatus()
 }
 
 // Run executes the backup process for all enabled routers.
 func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 	cfg := r.cfgMgr.Get()
-	r.storage = storage.New(cfg.BackupDir)
-	r.gitRepo = gitrepo.New(cfg.Git, r.logger)
+
+	r.mu.Lock()
+	r.storage = storage.New(cfg.BinaryBackupDir, cfg.ExportDir)
+	r.gitRepo = gitrepo.New(cfg.ExportDir, cfg.Git, r.logger)
+	r.mu.Unlock()
+
+	// Ensure Git repo is initialized
+	if cfg.Git.Enabled {
+		if err := r.gitRepo.EnsureRepo(ctx); err != nil {
+			r.logger.Warn("Failed to ensure Git repository", slog.Any("error", err))
+		}
+	}
 
 	// Sync state manager with latest configured devices
 	r.stateMgr.InitFromConfig(cfg.Routers, cfg.Defaults)
@@ -66,7 +87,7 @@ func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 
 	sem := make(chan struct{}, cfg.Concurrency)
 	var wg sync.WaitGroup
-	var mu sync.Mutex
+	var reportsMu sync.Mutex
 
 	reports := make([]notifier.RouterReport, 0, len(activeRouters))
 
@@ -76,14 +97,14 @@ func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 			r.logger.Warn("Global context cancelled, aborting remaining router backups",
 				slog.String("router", effRouter.Name),
 			)
-			mu.Lock()
+			reportsMu.Lock()
 			reports = append(reports, notifier.RouterReport{
 				Name:    effRouter.Name,
 				Host:    effRouter.Host,
 				Success: false,
 				Err:     fmt.Errorf("backup aborted: %w", ctx.Err()),
 			})
-			mu.Unlock()
+			reportsMu.Unlock()
 			continue
 		case sem <- struct{}{}:
 		}
@@ -97,9 +118,9 @@ func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 
 			rep := r.backupRouter(ctx, eff, cfg)
 
-			mu.Lock()
+			reportsMu.Lock()
 			reports = append(reports, rep)
-			mu.Unlock()
+			reportsMu.Unlock()
 		}(effRouter)
 	}
 
@@ -134,12 +155,19 @@ func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 		slog.Int("failed", failedCount),
 	)
 
-	// Automated retention cleanup
+	// Unified Git Commit and Push after all routers have been processed
+	if cfg.Git.Enabled {
+		if _, gitErr := r.gitRepo.CommitAndPush(ctx); gitErr != nil {
+			r.logger.Warn("Git commit/push cycle encountered error", slog.Any("error", gitErr))
+		}
+	}
+
+	// Automated retention cleanup for binary backups
 	deletedFiles, freedBytes, rotateErr := r.storage.Rotate(cfg.RetentionDays, r.logger)
 	if rotateErr != nil {
-		r.logger.Error("Local retention rotation encountered errors", slog.Any("error", rotateErr))
+		r.logger.Error("Binary backup retention rotation encountered errors", slog.Any("error", rotateErr))
 	} else if deletedFiles > 0 {
-		r.logger.Info("Local retention cleanup completed",
+		r.logger.Info("Binary backup retention cleanup completed",
 			slog.Int("deleted_files", deletedFiles),
 			slog.Int64("freed_bytes", freedBytes),
 		)
@@ -161,8 +189,20 @@ func (r *Runner) RunSingle(ctx context.Context, routerName string) (notifier.Rou
 		return notifier.RouterReport{}, fmt.Errorf("router %q not found in configuration", routerName)
 	}
 
+	r.mu.Lock()
+	r.storage = storage.New(cfg.BinaryBackupDir, cfg.ExportDir)
+	r.gitRepo = gitrepo.New(cfg.ExportDir, cfg.Git, r.logger)
+	r.mu.Unlock()
+
 	eff := rc.Effective(cfg.Defaults)
 	report := r.backupRouter(ctx, eff, cfg)
+
+	if report.Success && cfg.Git.Enabled {
+		if _, gitErr := r.gitRepo.CommitAndPush(ctx); gitErr != nil {
+			r.logger.Warn("Git commit/push for single router encountered error", slog.Any("error", gitErr))
+		}
+	}
+
 	return report, report.Err
 }
 
@@ -231,7 +271,7 @@ func (r *Runner) backupRouter(parentCtx context.Context, eff config.EffectiveRou
 		}
 	}()
 
-	// 1. Prepare local storage path
+	// 1. Prepare destination paths
 	destPaths, err := r.storage.PrepareDestination(eff.Name, start)
 	if err != nil {
 		report.Err = fmt.Errorf("local storage preparation failed: %w", err)
@@ -282,30 +322,28 @@ func (r *Runner) backupRouter(parentCtx context.Context, eff config.EffectiveRou
 		return report
 	}
 
-	// 7. Download .rsc file
+	// 7. Download .rsc file, normalize RouterOS date/time comment, and save to exportDir
 	rscFile, err := client.OpenRemoteFile(remoteRscPath)
 	if err != nil {
 		report.Err = fmt.Errorf("failed to open remote rsc file: %w", err)
 		return report
 	}
-	rscBytes, err := r.storage.SaveStream(rscFile, destPaths.LocalRscPath)
+	rawRscBytes, err := io.ReadAll(rscFile)
 	_ = rscFile.Close()
 	if err != nil {
-		report.Err = fmt.Errorf("failed to download and save rsc file: %w", err)
+		report.Err = fmt.Errorf("failed to read remote rsc file: %w", err)
 		return report
 	}
-	report.RscSize = rscBytes
 
-	// 8. Sync .rsc file with Git repository (if enabled)
-	if cfg.Git.Enabled {
-		if content, readErr := os.ReadFile(destPaths.LocalRscPath); readErr == nil {
-			if _, syncErr := r.gitRepo.SyncConfig(ctx, eff.Name, content); syncErr != nil {
-				log.Warn("Git config sync returned error", slog.Any("error", syncErr))
-			}
-		}
+	normalizedRsc := gitrepo.NormalizeRSC(rawRscBytes)
+	rscSize, err := r.storage.SaveBytes(normalizedRsc, destPaths.LocalRscPath)
+	if err != nil {
+		report.Err = fmt.Errorf("failed to save normalized rsc export: %w", err)
+		return report
 	}
+	report.RscSize = rscSize
 
-	// 9. Download .backup file
+	// 8. Download .backup binary file and save to binaryDir
 	backupFile, err := client.OpenRemoteFile(remoteBackupPath)
 	if err != nil {
 		report.Err = fmt.Errorf("failed to open remote backup file: %w", err)
@@ -314,12 +352,12 @@ func (r *Runner) backupRouter(parentCtx context.Context, eff config.EffectiveRou
 	backupBytes, err := r.storage.SaveStream(backupFile, destPaths.LocalBackupPath)
 	_ = backupFile.Close()
 	if err != nil {
-		report.Err = fmt.Errorf("failed to download and save backup file: %w", err)
+		report.Err = fmt.Errorf("failed to download and save binary backup file: %w", err)
 		return report
 	}
 	report.BackupSize = backupBytes
 
-	// 10. Verify local files
+	// 9. Verify local files
 	if _, err := r.storage.VerifyFile(destPaths.LocalRscPath); err != nil {
 		report.Err = fmt.Errorf("rsc local file integrity check failed: %w", err)
 		return report
@@ -329,7 +367,7 @@ func (r *Runner) backupRouter(parentCtx context.Context, eff config.EffectiveRou
 		return report
 	}
 
-	// 11. Clean up temporary files from RouterOS flash
+	// 10. Clean up temporary files from RouterOS flash
 	_ = client.RemoveFile(ctx, remoteRscPath)
 	_ = client.RemoveFile(ctx, remoteBackupPath)
 

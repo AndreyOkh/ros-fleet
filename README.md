@@ -1,93 +1,124 @@
 # ros-fleet
 
-Высокопроизводительная, надежная система управления парком сетевого оборудования **MikroTik RouterOS (v6 и v7)** и автоматического резервного копирования на **Go 1.27** с использованием стандартного пакета **`encoding/json/v2`**.
+[![Go Version](https://img.shields.io/badge/Go-1.27.4-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![MikroTik RouterOS](https://img.shields.io/badge/RouterOS-v6%20%7C%20v7-black?style=flat&logo=mikrotik)](https://mikrotik.com)
+[![Front-end](https://img.shields.io/badge/UI-HTMX%20%2B%20Vanilla%20CSS-blue?style=flat)](https://htmx.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+Высокопроизводительная, надежная система централизованного управления парком сетевого оборудования **MikroTik RouterOS (v6 и v7)**, автоматического резервного копирования и версионирования конфигураций в Git на **Go 1.27** с использованием стандартного пакета **`encoding/json/v2`**.
 
 Модуль: `github.com/AndreyOkh/ros-fleet`
 
-## Возможности
+---
 
-- **Go 1.27 и стандартная библиотека `encoding/json/v2`:**
-  - Полный переход на стандартный `encoding/json/v2` и `encoding/json/jsontext`.
-  - Повышенная производительность сериализации/десериализации и строгая RFC-совместимость.
+## Ключевые возможности
 
+- **Минимум внешних зависимостей:**
+  - Полный отказ от тяжелых фреймворков. Приложение построено на стандартной библиотеке Go 1.27.4:
+    - Официальный `encoding/json/v2` и `encoding/json/jsontext`.
+    - Стандартный `log/slog` для структурированного логирования.
+    - Официальный `golang.org/x/crypto/ssh` и проверенный `github.com/pkg/sftp`.
+    - Git-интеграция через системный `git` CLI без CGO и сторонних Go-библиотек.
 - **Встроенный Web-интерфейс (Zero-Build / Single Binary):**
-  - Работает без внешних Node.js/npm зависимостей: весь фронтенд вшит в бинарник через `embed.FS`.
-  - Реактивный UI на базе **HTMX** (динамическое переключение тогглов, запуск бэкапа, опрос роутеров без перезагрузки страницы).
-  - Минималистичный и чистый CSS с поддержкой **темной и светлой темы**.
-  - Опциональная авторизация через **HTTP Basic Auth** (`web.auth_user`, `web.auth_password`).
-- **Сбор телеметрии в рантайме (In-Memory State):**
+  - Никакого Node.js, npm или webpack: все шаблоны, стили и HTMX вшиты в единственный бинарник через `embed.FS`.
+  - Динамический UI на базе **HTMX**: добавление/редактирование роутеров, ручной запуск бэкапа, опрос телеметрии без перезагрузки страниц.
+  - Адаптивный интерфейс с автоматической поддержкой темной и светлой темы.
+  - Опциональная защита дашборда через **HTTP Basic Auth** (`web.auth_user`, `web.auth_password`).
+  - Отображение статуса Git-репозитория прямо на дашборде (ветка, хэш, время последнего коммита, статус push).
+- **Сбор телеметрии и персистентное состояние (`state.json`):**
   - Опрос оборудования по SSH (`/system resource print` и `/system routerboard print`).
-  - Определение модели (например, `RB4011iGS+`, `CCR2004-1G-12S+2XS`, `CHR`, `x86`) и версии RouterOS (например, `7.16.1 (stable)`).
-  - Отслеживание онлайн-статуса и истории последнего бэкапа (успех / ошибка с деталями).
-  - Обновление информации как по расписанию/бэкапу, так и по кнопке «Обновить инфо» в дашборде.
-- **Потокобезопасная работа с конфигурацией:**
-  - `ConfigManager` с `sync.RWMutex` для безопасного чтения и изменения конфигурации из веб-интерфейса на лету.
-  - Атомарное сохранение изменений в `config.json` (запись во временный файл + `os.Rename`).
-  - Флаг `enabled` для каждого роутера: можно временно отключать бэкап устройства без его удаления.
+  - Распознавание моделей (например, `RB4011iGS+`, `CCR2004-1G-12S+2XS`, `CHR`, `x86`) и версий RouterOS (например, `7.16.1 (stable)`).
+  - Персистентное хранилище `state.json` (`sync.RWMutex`) с атомарной перезаписью: при старте сервиса Web UI сразу отображает актуальное состояние без повторного опроса устройств.
+- **Глобальные настройки подключения (`defaults`):**
+  - Верхнеуровневый блок `defaults` в `config.json` для общих портов, логинов, SSH-ключей и паролей шифрования.
+  - Устройства могут наследовать глобальные настройки или переопределять любые параметры индивидуально.
+  - Лаконичное модальное окно добавления/редактирования устройства: удобный переключатель «Использовать настройки по умолчанию» и чистые чекбоксы.
+- **Разделение бинарных бэкапов и Git-каталога экспортов:**
+  - `binary_backup_dir` — каталог для бинарных файлов `.backup` с таймстемпами. К этой директории применяется автоматическая ротация по `retention_days`.
+  - `export_dir` — изолированный каталог для актуальных конфигураций `.rsc` (`<router_name>.rsc`), являющийся локальным Git-репозиторием.
+- **Умное версионирование конфигураций в Git (`internal/gitrepo`):**
+  - **Нормализация RouterOS Header:** автоматическое отсечение динамической строки даты/времени (`# 2026-11-17 03:00:05 by RouterOS 7.16.1` -> `# RouterOS 7.16.1`), благодаря чему `git diff` видит только реальные изменения конфигурации, не создавая мусорных коммитов при каждом прогоне.
+  - Единый цикл коммита: после опроса всех роутеров сервис делает один понятный коммит (например, `backup: update configs (Router1, Router2)`).
+  - Опциональный автоматический `git push` в удаленный Git-репозиторий (GitHub, GitLab, Gitea).
+- **Планировщик по расписанию (Time-of-Day):**
+  - Запуск в точное время суток (`schedule.times: ["03:00", "15:00"]`) с поддержкой часовых поясов (`schedule.timezone: "Europe/Moscow"`).
+  - Отказ от немедленного бэкапа при старте: запуск по расписанию, по требованию из Web UI или через CLI-флаг `-run-now`.
 - **Поддержка RouterOS v6 и RouterOS v7:**
   - Умная поддержка sensitive-данных: `/export show-sensitive file=...` на v7 с автоматическим фолбэком на классический `/export file=...` на v6.
-  - Поддержка шифрования бинарного бэкапа: при заданном пароле `/system backup save name=... password="..."`, при отключенном шифровании используется флаг `dont-encrypt=yes` (RouterOS v7) с фолбэком для старых v6.
-- **Безопасность и конкурентность:**
-  - Ограничение одновременных подключений (Worker Pool / Semaphore) через параметр `concurrency`.
-  - Таймауты и отмена операций на базе `context.Context`.
-  - Плавное завершение работы (Graceful Shutdown) по сигналам `SIGINT` и `SIGTERM`.
-- **Бережное отношение к Flash-памяти роутеров:**
-  - Ожидание завершения асинхронной записи файлов на накопитель роутера (root или `flash/`).
-  - Проверка целостности локального файла (размер > 0 байт) перед удалением с устройства.
-  - Очистка временных файлов `.rsc` и `.backup` с роутера через CLI и SFTP.
-- **Локальная ротация (Retention Policy):**
-  - Удаление архивов старше заданного `retention_days`.
-  - Структура: `<backup_dir>/<router_name>/<YYYY-MM-DD>/<router_name>_<YYYY-MM-DD_HH-MM-SS>.[rsc|backup]`.
+  - Шифрование бэкапа: при заданном пароле `/system backup save name=... password="..."`, при отключенном шифровании используется флаг `dont-encrypt=yes` (RouterOS v7) с фолбэком для старых v6.
 - **Telegram-уведомления:**
-  - HTML-отчет с экранированием спецсимволов и авторазбивкой длинных сообщений.
+  - HTML-отчет с подсчетом успешных/ошибочных бэкапов, объемом данных и детализацией по каждому роутеру.
 
 ---
 
-## Структура проекта
+## Архитектура хранения файлов
 
 ```
-ros-fleet/
-├── cmd/
-│   └── ros-fleet/
-│       └── main.go                 # Точка входа, флаги CLI, slog, graceful shutdown, планировщик
-├── internal/
-│   ├── config/
-│   │   ├── config.go              # Модель конфигурации, Manager (sync.RWMutex), атомарный save
-│   │   └── config_test.go         # Unit-тесты парсинга, валидации и Manager
-│   ├── mikrotik/
-│   │   └── client.go              # SSH/SFTP клиент, сбор DeviceInfo, RouterOS v6/v7 команды, cleanup
-│   ├── notifier/
-│   │   ├── telegram.go            # HTML-отчет и HTTP-клиент Telegram API
-│   │   └── telegram_test.go       # Unit-тесты Telegram-уведомлений
-│   ├── runner/
-│   │   ├── runner.go              # Worker Pool, оркестрация, RunSingle, RefreshDevice
-│   │   └── runner_test.go         # Unit-тесты конкурентности и context cancellation
-│   ├── state/
-│   │   └── state.go               # In-memory реестр устройств (sync.RWMutex), статусы, телеметрия
-│   ├── storage/
-│   │   ├── storage.go             # Атомарная запись (.tmp -> target), валидация, ротация
-│   │   └── storage_test.go        # Unit-тесты storage и ротации
-│   └── web/
-│       ├── server.go              # HTTP-сервер (Go 1.22+ routing), Basic Auth, HTMX-обработчики
-│       └── server_test.go         # Интеграционные тесты веб-интерфейса и API
-├── web/
-│   ├── web.go                     # embed.FS для шаблонов и статики
-│   ├── static/
-│   │   ├── htmx.min.js            # Автономный embedded HTMX
-│   │   └── style.css              # Адаптивные стили (Dark/Light mode)
-│   └── templates/
-│       ├── index.html             # Главная страница дашборда
-│       ├── summary_cards.html     # KPI-карточки сводки
-│       ├── table_container.html   # Контейнер таблицы устройств
-│       ├── table_row.html         # Шаблон строки устройства (HTMX swap)
-│       └── router_modal.html      # Модальное окно добавления/редактирования
-├── compose.yaml                   # Docker Compose спецификация
-├── Dockerfile                     # Мультистейдж сборка статического бинарника
-├── ros-fleet.service              # Systemd unit для Linux
-├── config.example.json            # Пример конфигурации
-├── Makefile                       # Сборка, тесты и кросс-компиляция
-├── go.mod
-└── go.sum
+backups/
+├── binary/                                   # binary_backup_dir (ротация по retention_days)
+│   ├── Router-Core/
+│   │   ├── Router-Core_2026-11-16_03-00-01.backup
+│   │   └── Router-Core_2026-11-17_03-00-02.backup
+│   └── Router-Office/
+│       ├── Router-Office_2026-11-16_03-00-05.backup
+│       └── Router-Office_2026-11-17_03-00-04.backup
+│
+└── exports/                                  # export_dir (локальный Git-репозиторий)
+    ├── .git/
+    ├── Router-Core.rsc                       # Всегда последняя актуальная версия
+    └── Router-Office.rsc                     # Нормализованный заголовок (без ложных diff)
+```
+
+1. **Бинарные бэкапы (`binary_backup_dir`):**
+   - Сохраняются с полным таймстемпом: `<router_name>_<YYYY-MM-DD_HH-MM-SS>.backup`.
+   - Фоновая ротация проверяет дату модификации файлов: копии старше `retention_days` автоматически удаляются, освобождая дисковое пространство.
+2. **Текстовые экспорты (`export_dir`):**
+   - Каждый роутер представлен фиксированным файлом `<router_name>.rsc`.
+   - При каждом цикле бэкапа файл перезаписывается нормализованным экспортом.
+   - Вся история изменений сохраняется в истории коммитов Git.
+
+---
+
+## Настройка Git-интеграции и SSH-ключей
+
+Для автоматической отправки изменений конфигураций в удаленный репозиторий (`auto_push: true`) настройте доступ по SSH:
+
+### 1. Генерация отдельного SSH-ключа (на хосте)
+```bash
+ssh-keygen -t ed25519 -C "ros-fleet@backup" -f ~/.ssh/id_ed25519 -N ""
+```
+Добавьте публичный ключ `~/.ssh/id_ed25519.pub` в качестве **Deploy Key** (с правами на запись / write access) в ваш репозиторий на GitHub / GitLab / Gitea.
+
+### 2. Добавление хоста в known_hosts
+```bash
+ssh-keyscan github.com >> ~/.ssh/known_hosts
+```
+
+### 3. Проброс ключей в Docker Compose (`compose.yaml`)
+В `compose.yaml` ключи и `known_hosts` монтируются в домашнюю директорию пользователя `rosfleet` в режиме `ro` (read-only):
+
+```yaml
+services:
+  ros-fleet:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ros-fleet:latest
+    container_name: ros-fleet
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.json:/app/config.json:rw
+      - ./state.json:/app/state.json:rw
+      - ./backups/binary:/app/backups/binary:rw
+      - ./backups/exports:/app/backups/exports:rw
+      # SSH-ключи для доступа к роутерам и Git push
+      - ~/.ssh/id_ed25519:/home/rosfleet/.ssh/id_ed25519:ro
+      - ~/.ssh/known_hosts:/home/rosfleet/.ssh/known_hosts:ro
+    environment:
+      - TZ=Europe/Moscow
+    command: ["-config", "/app/config.json"]
 ```
 
 ---
@@ -96,12 +127,38 @@ ros-fleet/
 
 ```json
 {
-  "backup_dir": "./backups",
+  "binary_backup_dir": "./backups/binary",
+  "export_dir": "./backups/exports",
+  "state_file": "./state.json",
   "retention_days": 30,
   "concurrency": 5,
   "timeout_sec": 120,
-  "schedule_interval": "24h",
-  "insecure_ignore_host_key": true,
+  "schedule": {
+    "times": [
+      "03:00",
+      "15:00"
+    ],
+    "timezone": "Europe/Moscow"
+  },
+  "defaults": {
+    "port": 22,
+    "user": "backup_user",
+    "password": "",
+    "private_key_path": "/home/rosfleet/.ssh/id_ed25519",
+    "private_key_passphrase": "",
+    "insecure_ignore_host_key": true,
+    "export_sensitive": true,
+    "encrypt_backup": false,
+    "backup_password": ""
+  },
+  "git": {
+    "enabled": true,
+    "remote_url": "git@github.com:your-org/mikrotik-configs.git",
+    "branch": "main",
+    "author_name": "ros-fleet",
+    "author_email": "ros-fleet@local",
+    "auto_push": false
+  },
   "web": {
     "enabled": true,
     "listen_addr": ":8080",
@@ -109,49 +166,93 @@ ros-fleet/
     "auth_password": ""
   },
   "telegram": {
-    "enabled": true,
+    "enabled": false,
     "bot_token": "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ",
     "chat_id": "-1001234567890",
-    "notify_on_success": true
+    "notify_on_success": true,
+    "timeout_sec": 15
   },
   "routers": [
     {
       "enabled": true,
       "name": "Router-Core-CCR2004",
-      "host": "192.168.1.1",
-      "port": 22,
-      "user": "backup_user",
-      "private_key_path": "/home/user/.ssh/id_ed25519",
-      "private_key_passphrase": "",
-      "insecure_ignore_host_key": true,
-      "export_sensitive": true,
-      "encrypt_backup": true,
-      "backup_password": "SuperSecretBackupPassword123!"
+      "host": "192.168.1.1"
     },
     {
       "enabled": true,
       "name": "Router-Office-RB4011",
       "host": "192.168.10.1",
-      "port": 22,
-      "user": "backup_user",
-      "password": "RouterPasswordExample",
-      "insecure_ignore_host_key": true,
-      "export_sensitive": true,
-      "encrypt_backup": false
+      "password": "RouterCustomPassword",
+      "encrypt_backup": true,
+      "backup_password": "SuperSecretBackupPassword123!"
+    },
+    {
+      "enabled": false,
+      "name": "Router-Warehouse-Legacy",
+      "host": "10.50.0.1",
+      "port": 2222,
+      "user": "admin",
+      "password": "LegacyPasswordExample",
+      "export_sensitive": false
     }
   ]
 }
 ```
 
+### Описание параметров
+
+| Параметр | Тип | По умолчанию | Описание |
+| :--- | :---: | :---: | :--- |
+| `binary_backup_dir` | string | `./backups/binary` | Каталог для бинарных бэкапов (`.backup`) |
+| `export_dir` | string | `./backups/exports` | Каталог для текстовых экспортов (`.rsc`), является Git-репозиторием |
+| `state_file` | string | `./state.json` | Файл персистентного состояния и телеметрии устройств |
+| `retention_days` | int | `30` | Срок хранения бинарных бэкапов в днях (0 = отключено) |
+| `concurrency` | int | `5` | Пул параллельных SSH-подключений |
+| `timeout_sec` | int | `120` | Таймаут одной операции с роутером в секундах |
+| `schedule.times` | []string | `["03:00"]` | Время суток для запуска бэкапов в формате `HH:MM` |
+| `schedule.timezone` | string | `Local` | Часовой пояс планировщика (напр. `"Europe/Moscow"`, `"UTC"`) |
+| `defaults.*` | object | — | Глобальные настройки авторизации и бэкапа по умолчанию |
+| `git.enabled` | bool | `false` | Включить Git-версионирование экспортов в `export_dir` |
+| `git.remote_url` | string | `""` | URL удаленного репозитория (`git@...` или `https://...`) |
+| `git.branch` | string | `"main"` | Имя ветки в Git |
+| `git.author_name` | string | `"ros-fleet"` | Имя автора для Git коммитов |
+| `git.author_email` | string | `"ros-fleet@local"` | Email автора для Git коммитов |
+| `git.auto_push` | bool | `false` | Выполнять `git push` при наличии новых коммитов |
+| `web.enabled` | bool | `true` | Включить встроенный HTTP веб-интерфейс |
+| `web.listen_addr` | string | `":8080"` | Сетевой адрес и порт веб-сервера |
+| `web.auth_user` | string | `""` | Логин для Basic Auth (если пусто — вход без пароля) |
+| `web.auth_password` | string | `""` | Пароль для Basic Auth |
+| `telegram.enabled` | bool | `false` | Включить отправку отчетов в Telegram |
+| `routers[].enabled` | bool | `true` | Флаг активности устройства в парке |
+| `routers[].name` | string | — | Уникальное имя устройства |
+| `routers[].host` | string | — | IP-адрес или DNS-имя роутера |
+
+---
+
+## Флаги командной строки (CLI)
+
+```bash
+ros-fleet [флаги]
+```
+
+- `-config <путь>` — путь к конфигурационному файлу JSON (по умолчанию `config.json`).
+- `-run-now` — выполнить немедленный цикл бэкапа всех устройств при старте приложения перед переходом в режим ожидания расписания.
+- `-once` — выполнить один цикл бэкапа и сразу завершить работу (удобно для вызова из системного cron или пайплайнов).
+- `-log-level <level>` — уровень логирования: `debug`, `info`, `warn`, `error` (по умолчанию `info`).
+- `-log-format <format>` — формат логов: `text` или `json` (по умолчанию `text`).
+- `-version` — вывести информацию о версии и дату сборки приложения.
+
 ---
 
 ## Сборка и запуск
 
-### 1. Статический бинарник без CGO:
+### 1. Сборка из исходников на Go (Go 1.24+ / 1.27.4)
+
+Статический бинарник без CGO:
 ```bash
 make build-static
 ```
-Или вручную:
+Или прямой вызов Go:
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
   -trimpath \
@@ -160,31 +261,36 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
   ./cmd/ros-fleet
 ```
 
-### 2. Запуск в фоновом режиме (демон + Web UI):
+### 2. Запуск в фоновом режиме (демон + Web UI)
 ```bash
 ./bin/ros-fleet-linux-amd64 -config config.json
 ```
-После запуска откройте в браузере: `http://localhost:8080`.
+Откройте в браузере: `http://localhost:8080`.
 
-### 3. Однократный запуск бэкапа без веб-сервера (для cron):
+### 3. Запуск через Docker Compose
 ```bash
-./bin/ros-fleet-linux-amd64 -config config.json -once
-```
+# Клонируйте репозиторий и подготовьте config.json
+cp config.example.json config.json
 
-### 4. Запуск в Docker Compose:
-```bash
+# Запустите контейнер в фоне
 docker compose up -d
-```
-Логи:
-```bash
+
+# Просмотр логов
 docker compose logs -f
 ```
 
-### 5. Запуск через systemd:
+### 4. Запуск через Systemd (Linux)
 ```bash
-sudo cp bin/ros-fleet-linux-amd64 /opt/ros-fleet/ros-fleet
-sudo cp config.example.json /opt/ros-fleet/config.json
+sudo cp bin/ros-fleet-linux-amd64 /usr/local/bin/ros-fleet
+sudo mkdir -p /etc/ros-fleet
+sudo cp config.example.json /etc/ros-fleet/config.json
 sudo cp ros-fleet.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now ros-fleet.service
 ```
+
+---
+
+## Лицензия
+
+Проект распространяется под лицензией MIT.

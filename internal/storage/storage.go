@@ -19,22 +19,33 @@ var (
 
 // DestinationPaths holds generated local file paths for a backup run.
 type DestinationPaths struct {
-	DateDir         string
 	BaseFilename    string
 	LocalRscPath    string
 	LocalBackupPath string
 }
 
-// Storage manages local backup files, writing, verification, and retention.
+// Storage manages local binary backups and export paths.
 type Storage struct {
-	baseDir string
+	binaryDir string
+	exportDir string
 }
 
-// New creates a new Storage manager for the specified backup directory.
-func New(baseDir string) *Storage {
+// New creates a new Storage manager with separated binary and export directories.
+func New(binaryDir, exportDir string) *Storage {
 	return &Storage{
-		baseDir: filepath.Clean(baseDir),
+		binaryDir: filepath.Clean(binaryDir),
+		exportDir: filepath.Clean(exportDir),
 	}
+}
+
+// BinaryDir returns the configured binary backups root directory.
+func (s *Storage) BinaryDir() string {
+	return s.binaryDir
+}
+
+// ExportDir returns the configured RSC export directory.
+func (s *Storage) ExportDir() string {
+	return s.exportDir
 }
 
 // SanitizeName cleans a router name to make it safe for filesystem usage.
@@ -47,23 +58,29 @@ func SanitizeName(name string) string {
 	return cleaned
 }
 
-// PrepareDestination prepares the destination folder and target file paths for a router backup.
+// PrepareDestination prepares paths for the timestamped binary backup and latest RSC export.
 func (s *Storage) PrepareDestination(routerName string, t time.Time) (DestinationPaths, error) {
 	safeRouterName := SanitizeName(routerName)
-	dateStr := t.Format("2006-01-02")
 	timeStr := t.Format("2006-01-02_15-04-05")
-
-	dateDir := filepath.Join(s.baseDir, safeRouterName, dateStr)
-	if err := os.MkdirAll(dateDir, 0o755); err != nil {
-		return DestinationPaths{}, fmt.Errorf("failed to create directory %q: %w", dateDir, err)
-	}
-
 	baseFilename := fmt.Sprintf("%s_%s", safeRouterName, timeStr)
+
+	// Binary backup goes to binaryDir (with timestamp in router subfolder)
+	routerBinaryDir := filepath.Join(s.binaryDir, safeRouterName)
+	if err := os.MkdirAll(routerBinaryDir, 0o755); err != nil {
+		return DestinationPaths{}, fmt.Errorf("failed to create router binary directory %q: %w", routerBinaryDir, err)
+	}
+	localBackupPath := filepath.Join(routerBinaryDir, baseFilename+".backup")
+
+	// RSC export goes to exportDir (latest version with fixed name: <router_name>.rsc)
+	if err := os.MkdirAll(s.exportDir, 0o755); err != nil {
+		return DestinationPaths{}, fmt.Errorf("failed to create export directory %q: %w", s.exportDir, err)
+	}
+	localRscPath := filepath.Join(s.exportDir, safeRouterName+".rsc")
+
 	return DestinationPaths{
-		DateDir:         dateDir,
 		BaseFilename:    baseFilename,
-		LocalRscPath:    filepath.Join(dateDir, baseFilename+".rsc"),
-		LocalBackupPath: filepath.Join(dateDir, baseFilename+".backup"),
+		LocalRscPath:    localRscPath,
+		LocalBackupPath: localBackupPath,
 	}, nil
 }
 
@@ -113,6 +130,25 @@ func (s *Storage) SaveStream(reader io.Reader, targetPath string) (int64, error)
 	return written, nil
 }
 
+// SaveBytes atomically writes a byte slice to targetPath via a temporary file.
+func (s *Storage) SaveBytes(data []byte, targetPath string) (int64, error) {
+	if len(data) == 0 {
+		return 0, errors.New("data is empty (0 bytes)")
+	}
+
+	tmpPath := targetPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return 0, fmt.Errorf("failed to write temp file %q: %w", tmpPath, err)
+	}
+
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return 0, fmt.Errorf("failed to rename temp file to target %q: %w", targetPath, err)
+	}
+
+	return int64(len(data)), nil
+}
+
 // VerifyFile checks that a file exists and is not empty.
 func (s *Storage) VerifyFile(path string) (int64, error) {
 	info, err := os.Stat(path)
@@ -125,8 +161,8 @@ func (s *Storage) VerifyFile(path string) (int64, error) {
 	return info.Size(), nil
 }
 
-// Rotate removes .backup and .rsc files older than retentionDays and cleans up empty folders.
-// It never touches .git or hidden directories.
+// Rotate removes binary backup (.backup) files older than retentionDays in binaryDir.
+// It never touches exportDir or .git directories.
 func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, int64, error) {
 	if retentionDays <= 0 {
 		if logger != nil {
@@ -135,7 +171,7 @@ func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, int64, er
 		return 0, 0, nil
 	}
 
-	if _, err := os.Stat(s.baseDir); os.IsNotExist(err) {
+	if _, err := os.Stat(s.binaryDir); os.IsNotExist(err) {
 		return 0, 0, nil
 	}
 
@@ -143,13 +179,13 @@ func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, int64, er
 	var deletedFiles int
 	var freedBytes int64
 
-	// 1. Walk and remove old backup files (.backup, .rsc)
-	err := filepath.WalkDir(s.baseDir, func(path string, d fs.DirEntry, walkErr error) error {
+	// Walk and remove old .backup files
+	err := filepath.WalkDir(s.binaryDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
 
-		// Skip .git or hidden directories
+		// Skip hidden directories or .git
 		if d.IsDir() {
 			name := d.Name()
 			if strings.HasPrefix(name, ".") || name == ".git" {
@@ -158,9 +194,8 @@ func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, int64, er
 			return nil
 		}
 
-		// Only check backup files
-		ext := filepath.Ext(path)
-		if ext != ".backup" && ext != ".rsc" {
+		// Only check .backup files
+		if filepath.Ext(path) != ".backup" {
 			return nil
 		}
 
@@ -175,7 +210,7 @@ func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, int64, er
 				deletedFiles++
 				freedBytes += size
 				if logger != nil {
-					logger.Debug("Deleted expired backup file",
+					logger.Debug("Deleted expired binary backup file",
 						slog.String("path", path),
 						slog.Int64("size", size),
 						slog.Time("mod_time", info.ModTime()),
@@ -191,11 +226,11 @@ func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, int64, er
 		logger.Warn("Error during retention file walk", slog.Any("error", err))
 	}
 
-	// 2. Clean up empty subdirectories
-	s.cleanEmptyDirectories(s.baseDir)
+	// Clean up empty subdirectories in binaryDir
+	s.cleanEmptyDirectories(s.binaryDir)
 
 	if deletedFiles > 0 && logger != nil {
-		logger.Info("Backup retention rotation completed",
+		logger.Info("Binary backup retention rotation completed",
 			slog.Int("retention_days", retentionDays),
 			slog.Int("deleted_files", deletedFiles),
 			slog.String("freed_space", formatBytes(freedBytes)),
@@ -205,7 +240,7 @@ func (s *Storage) Rotate(retentionDays int, logger *slog.Logger) (int, int64, er
 	return deletedFiles, freedBytes, nil
 }
 
-// cleanEmptyDirectories traverses bottom-up and removes empty directories (except baseDir and .git).
+// cleanEmptyDirectories traverses bottom-up and removes empty directories (except binaryDir).
 func (s *Storage) cleanEmptyDirectories(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -220,7 +255,7 @@ func (s *Storage) cleanEmptyDirectories(dir string) {
 		s.cleanEmptyDirectories(subDir)
 	}
 
-	if dir != s.baseDir {
+	if dir != s.binaryDir {
 		rem, err := os.ReadDir(dir)
 		if err == nil && len(rem) == 0 {
 			_ = os.Remove(dir)

@@ -11,9 +11,11 @@ services:
     volumes:
       - ./config.json:/app/config.json:rw
       - ./state.json:/app/state.json:rw
-      - ./backups:/app/backups:rw
-      - ./git-configs:/app/git-configs:rw
-#      - ~/.ssh:/home/rosfleet/.ssh:ro
+      - ./backups/binary:/app/backups/binary:rw
+      - ./backups/exports:/app/backups/exports:rw
+      # SSH keys and known_hosts for router connections and Git remote auto_push
+      - ~/.ssh/id_ed25519:/home/rosfleet/.ssh/id_ed25519:ro
+      - ~/.ssh/known_hosts:/home/rosfleet/.ssh/known_hosts:ro
     environment:
       - TZ=Europe/Moscow
     command: ["-config", "/app/config.json"]

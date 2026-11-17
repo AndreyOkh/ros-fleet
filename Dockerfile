@@ -37,14 +37,16 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /bin/ros-fleet /usr/local/bin/ros-fleet
 
-# Prepare directories
-RUN mkdir -p /app/backups /app/git-configs && chown -R rosfleet:rosfleet /app
+# Prepare directories and SSH home
+RUN mkdir -p /app/backups/binary /app/backups/exports /home/rosfleet/.ssh && \
+    chown -R rosfleet:rosfleet /app /home/rosfleet && \
+    chmod 700 /home/rosfleet/.ssh
 
 USER rosfleet
 
 EXPOSE 8080
 
-VOLUME ["/app/backups", "/app/git-configs"]
+VOLUME ["/app/backups"]
 
 ENTRYPOINT ["/usr/local/bin/ros-fleet"]
 CMD ["-config", "/app/config.json"]

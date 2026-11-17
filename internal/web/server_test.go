@@ -116,6 +116,18 @@ func TestServerDashboardAndStatic(t *testing.T) {
 	if !strings.Contains(rrDef.Body.String(), "Глобальные настройки подключения") {
 		t.Errorf("expected defaults modal to contain title")
 	}
+
+	// 4. Test Git Status GET /dashboard/git-status
+	reqGit := httptest.NewRequest(http.MethodGet, "/dashboard/git-status", nil)
+	rrGit := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrGit, reqGit)
+
+	if rrGit.Code != http.StatusOK {
+		t.Errorf("GET /dashboard/git-status returned status %d, want %d", rrGit.Code, http.StatusOK)
+	}
+	if !strings.Contains(rrGit.Body.String(), "git-status-badge") {
+		t.Errorf("expected git status HTML to contain 'git-status-badge'")
+	}
 }
 
 func TestServerToggleAndEndpoints(t *testing.T) {

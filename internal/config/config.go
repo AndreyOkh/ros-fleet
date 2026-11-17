@@ -15,17 +15,19 @@ import (
 
 // Config represents the application configuration.
 type Config struct {
-	BackupDir     string         `json:"backup_dir"`
-	StateFile     string         `json:"state_file"`
-	RetentionDays int            `json:"retention_days"`
-	Concurrency   int            `json:"concurrency"`
-	TimeoutSec    int            `json:"timeout_sec"`
-	Schedule      ScheduleConfig `json:"schedule"`
-	Defaults      DefaultsConfig `json:"defaults"`
-	Web           WebConfig      `json:"web"`
-	Git           GitConfig      `json:"git"`
-	Telegram      TelegramConfig `json:"telegram"`
-	Routers       []RouterConfig `json:"routers"`
+	BinaryBackupDir string         `json:"binary_backup_dir"`
+	ExportDir       string         `json:"export_dir"`
+	BackupDir       string         `json:"backup_dir,omitempty"`
+	StateFile       string         `json:"state_file"`
+	RetentionDays   int            `json:"retention_days"`
+	Concurrency     int            `json:"concurrency"`
+	TimeoutSec      int            `json:"timeout_sec"`
+	Schedule        ScheduleConfig `json:"schedule"`
+	Defaults        DefaultsConfig `json:"defaults"`
+	Web             WebConfig      `json:"web"`
+	Git             GitConfig      `json:"git"`
+	Telegram        TelegramConfig `json:"telegram"`
+	Routers         []RouterConfig `json:"routers"`
 }
 
 // ScheduleConfig defines time-of-day execution and timezone.
@@ -50,7 +52,7 @@ type DefaultsConfig struct {
 // GitConfig holds settings for versioning .rsc configurations in a local Git repository.
 type GitConfig struct {
 	Enabled     bool   `json:"enabled"`
-	RepoDir     string `json:"repo_dir"`
+	RemoteURL   string `json:"remote_url,omitempty"`
 	Branch      string `json:"branch"`
 	AuthorName  string `json:"author_name"`
 	AuthorEmail string `json:"author_email"`
@@ -113,6 +115,19 @@ func (r RouterConfig) IsEnabled() bool {
 		return true
 	}
 	return *r.Enabled
+}
+
+// UsesDefaults returns true if the router overrides none of the default connection/backup settings.
+func (r RouterConfig) UsesDefaults() bool {
+	return r.Port == 0 &&
+		r.User == "" &&
+		r.Password == "" &&
+		r.PrivateKeyPath == "" &&
+		r.PrivateKeyPassphrase == "" &&
+		r.InsecureIgnoreHostKey == nil &&
+		r.ExportSensitive == nil &&
+		r.EncryptBackup == nil &&
+		r.BackupPassword == ""
 }
 
 // SetEnabled updates the enabled state of the router.
@@ -213,8 +228,19 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
-	if strings.TrimSpace(c.BackupDir) == "" {
-		c.BackupDir = "./backups"
+	if strings.TrimSpace(c.BinaryBackupDir) == "" {
+		if strings.TrimSpace(c.BackupDir) != "" {
+			c.BinaryBackupDir = filepath.Join(c.BackupDir, "binary")
+		} else {
+			c.BinaryBackupDir = "./backups/binary"
+		}
+	}
+	if strings.TrimSpace(c.ExportDir) == "" {
+		if strings.TrimSpace(c.BackupDir) != "" {
+			c.ExportDir = filepath.Join(c.BackupDir, "exports")
+		} else {
+			c.ExportDir = "./backups/exports"
+		}
 	}
 	if strings.TrimSpace(c.StateFile) == "" {
 		c.StateFile = "./state.json"
@@ -236,9 +262,6 @@ func (c *Config) applyDefaults() {
 	}
 	if strings.TrimSpace(c.Web.ListenAddr) == "" {
 		c.Web.ListenAddr = ":8080"
-	}
-	if strings.TrimSpace(c.Git.RepoDir) == "" {
-		c.Git.RepoDir = "./git-configs"
 	}
 	if strings.TrimSpace(c.Git.Branch) == "" {
 		c.Git.Branch = "main"
@@ -264,6 +287,13 @@ func (c *Config) applyDefaults() {
 // Validate checks configuration sanity.
 func (c *Config) Validate() error {
 	var errs []string
+
+	if strings.TrimSpace(c.BinaryBackupDir) == "" {
+		errs = append(errs, "'binary_backup_dir' must not be empty")
+	}
+	if strings.TrimSpace(c.ExportDir) == "" {
+		errs = append(errs, "'export_dir' must not be empty")
+	}
 
 	if len(c.Routers) == 0 {
 		errs = append(errs, "at least one router must be defined in 'routers'")

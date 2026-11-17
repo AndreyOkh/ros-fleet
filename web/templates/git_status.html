@@ -1,0 +1,26 @@
+<div class="git-status-badge {{if not .Enabled}}git-disabled{{else if .LastError}}git-error{{else}}git-ok{{end}}"
+     title="{{if not .Enabled}}Git-версионирование экспортов отключено{{else if .LastError}}{{.LastError}}{{else}}Ветка: {{.Branch}} | Последний коммит: {{.LastCommitMsg}}{{end}}">
+  <span class="git-icon">🌿</span>
+  {{if not .Enabled}}
+    <span class="git-text">Git: выкл</span>
+  {{else}}
+    <span class="git-branch">{{.Branch}}</span>
+    {{if .LastCommitHash}}
+      <span class="git-hash" title="{{.LastCommitMsg}}">#{{.LastCommitHash}}</span>
+      <span class="git-time">{{.LastCommitFormatted}}</span>
+    {{else}}
+      <span class="git-time">нет коммитов</span>
+    {{end}}
+    {{if .AutoPush}}
+      {{if .LastError}}
+        <span class="git-push-pill git-push-err" title="{{.LastError}}">⚠️ push error</span>
+      {{else if not .LastPushAt.IsZero}}
+        <span class="git-push-pill git-push-ok" title="Push: {{.LastPushFormatted}}">⬆️ push ok</span>
+      {{else}}
+        <span class="git-push-pill git-push-idle">⬆️ auto push</span>
+      {{end}}
+    {{else}}
+      <span class="git-push-pill git-push-local" title="Локальный Git репозиторий">💾 local</span>
+    {{end}}
+  {{end}}
+</div>

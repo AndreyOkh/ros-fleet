@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AndreyOkh/ros-fleet/internal/config"
+	"github.com/AndreyOkh/ros-fleet/internal/gitrepo"
 	"github.com/AndreyOkh/ros-fleet/internal/runner"
 	"github.com/AndreyOkh/ros-fleet/internal/scheduler"
 	"github.com/AndreyOkh/ros-fleet/internal/state"
@@ -53,15 +54,20 @@ type SummaryData struct {
 
 // IndexData is passed to the main index.html template.
 type IndexData struct {
-	Summary SummaryData
-	Table   TableData
+	Summary   SummaryData
+	Table     TableData
+	GitStatus gitrepo.GitStatus
 }
 
 // ModalData is passed to the router add/edit modal template.
 type ModalData struct {
-	IsEdit   bool
-	Router   config.RouterConfig
-	Defaults config.DefaultsConfig
+	IsEdit                         bool
+	Router                         config.RouterConfig
+	Defaults                       config.DefaultsConfig
+	UsesDefaults                   bool
+	InsecureIgnoreHostKeyEffective bool
+	ExportSensitiveEffective       bool
+	EncryptBackupEffective         bool
 }
 
 // DefaultsModalData is passed to the defaults modal template.
@@ -109,6 +115,7 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 	// Dashboard routes
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /dashboard/summary", s.handleSummaryCards)
+	mux.HandleFunc("GET /dashboard/git-status", s.handleGitStatus)
 	mux.HandleFunc("GET /routers/table", s.handleTable)
 
 	// Global settings routes
@@ -167,13 +174,23 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := IndexData{
-		Summary: s.buildSummaryData(),
-		Table:   s.buildTableData(),
+		Summary:   s.buildSummaryData(),
+		Table:     s.buildTableData(),
+		GitStatus: s.runner.GitStatus(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "index.html", data); err != nil {
 		s.logger.Error("Template render error (index.html)", slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {
+	status := s.runner.GitStatus()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "git_status.html", status); err != nil {
+		s.logger.Error("Template render error (git_status.html)", slog.Any("error", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -235,9 +252,13 @@ func (s *Server) handleSaveDefaults(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNewRouterModal(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfgMgr.Get()
 	data := ModalData{
-		IsEdit:   false,
-		Router:   config.RouterConfig{},
-		Defaults: cfg.Defaults,
+		IsEdit:                         false,
+		Router:                         config.RouterConfig{},
+		Defaults:                       cfg.Defaults,
+		UsesDefaults:                   true,
+		InsecureIgnoreHostKeyEffective: cfg.Defaults.InsecureIgnoreHostKey,
+		ExportSensitiveEffective:       cfg.Defaults.ExportSensitive,
+		EncryptBackupEffective:         cfg.Defaults.EncryptBackup,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
@@ -252,10 +273,15 @@ func (s *Server) handleEditRouterModal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.cfgMgr.Get()
+	eff := rc.Effective(cfg.Defaults)
 	data := ModalData{
-		IsEdit:   true,
-		Router:   rc,
-		Defaults: cfg.Defaults,
+		IsEdit:                         true,
+		Router:                         rc,
+		Defaults:                       cfg.Defaults,
+		UsesDefaults:                   rc.UsesDefaults(),
+		InsecureIgnoreHostKeyEffective: eff.InsecureIgnoreHostKey,
+		ExportSensitiveEffective:       eff.ExportSensitive,
+		EncryptBackupEffective:         eff.EncryptBackup,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
@@ -267,33 +293,42 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	port, _ := strconv.Atoi(r.FormValue("port"))
+	name := strings.TrimSpace(r.FormValue("name"))
+	host := strings.TrimSpace(r.FormValue("host"))
+	useDefaults := r.FormValue("use_defaults") == "on" || r.FormValue("use_defaults") == "true"
 
-	parseOptionalBool := func(val string) *bool {
-		switch val {
-		case "true":
-			b := true
-			return &b
-		case "false":
-			b := false
-			return &b
-		default:
-			return nil
-		}
+	enabled := true
+	if existing, found := s.cfgMgr.GetRouter(name); found {
+		enabled = existing.IsEnabled()
 	}
 
-	router := config.RouterConfig{
-		Name:                  strings.TrimSpace(r.FormValue("name")),
-		Host:                  strings.TrimSpace(r.FormValue("host")),
-		Port:                  port,
-		User:                  strings.TrimSpace(r.FormValue("user")),
-		Password:              strings.TrimSpace(r.FormValue("password")),
-		PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
-		PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
-		InsecureIgnoreHostKey: parseOptionalBool(r.FormValue("insecure_ignore_host_key")),
-		ExportSensitive:       parseOptionalBool(r.FormValue("export_sensitive")),
-		EncryptBackup:         parseOptionalBool(r.FormValue("encrypt_backup")),
-		BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
+	var router config.RouterConfig
+	if useDefaults {
+		router = config.RouterConfig{
+			Enabled: &enabled,
+			Name:    name,
+			Host:    host,
+		}
+	} else {
+		port, _ := strconv.Atoi(r.FormValue("port"))
+		insecure := r.FormValue("insecure_ignore_host_key") == "on"
+		sensitive := r.FormValue("export_sensitive") == "on"
+		encrypt := r.FormValue("encrypt_backup") == "on"
+
+		router = config.RouterConfig{
+			Enabled:               &enabled,
+			Name:                  name,
+			Host:                  host,
+			Port:                  port,
+			User:                  strings.TrimSpace(r.FormValue("user")),
+			Password:              strings.TrimSpace(r.FormValue("password")),
+			PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
+			PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
+			InsecureIgnoreHostKey: &insecure,
+			ExportSensitive:       &sensitive,
+			EncryptBackup:         &encrypt,
+			BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
+		}
 	}
 
 	if err := s.cfgMgr.UpsertRouter(router); err != nil {

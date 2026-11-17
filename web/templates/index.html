@@ -21,12 +21,16 @@
       </div>
 
       <div class="header-actions">
+        <div id="git-status-container" hx-get="/dashboard/git-status" hx-trigger="load, every 15s" hx-swap="innerHTML">
+          {{template "git_status.html" .GitStatus}}
+        </div>
+
         <button class="btn btn-secondary"
                 hx-get="/settings/defaults"
                 hx-target="#modal-container"
                 hx-swap="innerHTML"
                 title="Настроить глобальные параметры подключения по умолчанию">
-          <span>⚙️</span> Настройки defaults
+          <span>⚙️</span> Defaults
         </button>
 
         <button class="btn btn-secondary"

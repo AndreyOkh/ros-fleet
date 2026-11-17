@@ -1,5 +1,5 @@
 <div class="modal-overlay" id="router-modal">
-  <div class="modal-content">
+  <div class="modal-content" style="max-width: 580px;">
     <div class="modal-header">
       <h3 class="modal-title">
         {{if .IsEdit}}Редактировать устройство {{.Router.Name}}{{else}}Добавить устройство в парк{{end}}
@@ -12,6 +12,7 @@
           hx-swap="innerHTML"
           onsubmit="setTimeout(() => { document.getElementById('modal-container').innerHTML = ''; }, 300)">
       
+      <!-- Primary Device Identification -->
       <div class="form-grid">
         <div class="form-group">
           <label for="name">Имя устройства *</label>
@@ -24,87 +25,87 @@
           <label for="host">Хост (IP или DNS) *</label>
           <input type="text" id="host" name="host" value="{{.Router.Host}}" required placeholder="192.168.88.1">
         </div>
+      </div>
 
-        <div class="form-group">
-          <label for="port">SSH Порт (0 = из defaults: {{.Defaults.Port}})</label>
-          <input type="number" id="port" name="port" value="{{if gt .Router.Port 0}}{{.Router.Port}}{{end}}" placeholder="{{.Defaults.Port}} (по умолчанию)">
-        </div>
-
-        <div class="form-group">
-          <label for="user">SSH Пользователь</label>
-          <input type="text" id="user" name="user" value="{{.Router.User}}" placeholder="{{if .Defaults.User}}{{.Defaults.User}} (из defaults){{else}}admin{{end}}">
-        </div>
-
-        <div class="form-group full-width">
-          <label for="password">Пароль</label>
-          <input type="password" id="password" name="password" value="{{.Router.Password}}" placeholder="{{if .Defaults.Password}}•••••••• (задан в defaults){{else}}Оставьте пустым, если используется SSH-ключ{{end}}">
-        </div>
-
-        <div class="form-group">
-          <label for="private_key_path">Путь к SSH-ключу</label>
-          <input type="text" id="private_key_path" name="private_key_path" value="{{.Router.PrivateKeyPath}}" placeholder="{{if .Defaults.PrivateKeyPath}}{{.Defaults.PrivateKeyPath}} (из defaults){{else}}/root/.ssh/id_ed25519{{end}}">
-        </div>
-
-        <div class="form-group">
-          <label for="private_key_passphrase">Пароль от SSH-ключа</label>
-          <input type="password" id="private_key_passphrase" name="private_key_passphrase" value="{{.Router.PrivateKeyPassphrase}}" placeholder="Опционально">
-        </div>
-
-        <div class="form-group full-width">
-          <label for="insecure_ignore_host_key">Проверка HostKey</label>
-          <select id="insecure_ignore_host_key" name="insecure_ignore_host_key">
-            <option value="inherit" {{if eq .Router.InsecureIgnoreHostKey nil}}selected{{end}}>
-              По умолчанию из defaults ({{if .Defaults.InsecureIgnoreHostKey}}Отключена{{else}}Включена строгая{{end}})
-            </option>
-            <option value="true" {{if and .Router.InsecureIgnoreHostKey (derefBool .Router.InsecureIgnoreHostKey)}}selected{{end}}>
-              Всегда отключать проверку HostKey (для LAN)
-            </option>
-            <option value="false" {{if and .Router.InsecureIgnoreHostKey (not (derefBool .Router.InsecureIgnoreHostKey))}}selected{{end}}>
-              Строгая проверка HostKey через known_hosts
-            </option>
-          </select>
-        </div>
-
-        <div class="form-group full-width">
-          <label for="export_sensitive">Чувствительные данные (.rsc / show-sensitive)</label>
-          <select id="export_sensitive" name="export_sensitive">
-            <option value="inherit" {{if eq .Router.ExportSensitive nil}}selected{{end}}>
-              По умолчанию из defaults ({{if .Defaults.ExportSensitive}}Включать{{else}}Скрывать{{end}})
-            </option>
-            <option value="true" {{if and .Router.ExportSensitive (derefBool .Router.ExportSensitive)}}selected{{end}}>
-              Всегда включать пароли и ключи в экспорт (show-sensitive)
-            </option>
-            <option value="false" {{if and .Router.ExportSensitive (not (derefBool .Router.ExportSensitive))}}selected{{end}}>
-              Скрывать пароли в экспорте
-            </option>
-          </select>
-        </div>
-
-        <div class="form-group full-width">
-          <label for="encrypt_backup">Шифрование бинарного бэкапа (.backup)</label>
-          <select id="encrypt_backup" name="encrypt_backup"
-                  onchange="document.getElementById('backup_pwd_group').style.display = (this.value === 'true' || (this.value === 'inherit' && {{.Defaults.EncryptBackup}})) ? 'block' : 'none'">
-            <option value="inherit" {{if eq .Router.EncryptBackup nil}}selected{{end}}>
-              По умолчанию из defaults ({{if .Defaults.EncryptBackup}}Шифровать{{else}}Без шифрования{{end}})
-            </option>
-            <option value="true" {{if and .Router.EncryptBackup (derefBool .Router.EncryptBackup)}}selected{{end}}>
-              Всегда шифровать паролем
-            </option>
-            <option value="false" {{if and .Router.EncryptBackup (not (derefBool .Router.EncryptBackup))}}selected{{end}}>
-              Не шифровать (dont-encrypt=yes)
-            </option>
-          </select>
-        </div>
-
-        <div class="form-group full-width" id="backup_pwd_group"
-             style="display: {{if or (and .Router.EncryptBackup (derefBool .Router.EncryptBackup)) (and (eq .Router.EncryptBackup nil) .Defaults.EncryptBackup)}}block{{else}}none{{end}};">
-          <label for="backup_password">Пароль шифрования бэкапа</label>
-          <input type="password" id="backup_password" name="backup_password" value="{{.Router.BackupPassword}}"
-                 placeholder="{{if .Defaults.BackupPassword}}•••••••• (задан в defaults){{else}}Стойкий пароль шифрования{{end}}">
+      <!-- Master Defaults Toggle -->
+      <div class="checkbox-card" style="margin: 16px 0; padding: 12px 14px; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: var(--radius-md);">
+        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500;">
+          <input type="checkbox" id="use_defaults" name="use_defaults" {{if .UsesDefaults}}checked{{end}}
+                 onchange="document.getElementById('custom_settings').style.display = this.checked ? 'none' : 'block'; document.getElementById('defaults_summary').style.display = this.checked ? 'block' : 'none';"
+                 style="width: 18px; height: 18px; accent-color: var(--accent-color); cursor: pointer;">
+          <span>Использовать глобальные настройки по умолчанию (defaults)</span>
+        </label>
+        <div id="defaults_summary" style="display: {{if .UsesDefaults}}block{{else}}none{{end}}; margin-top: 8px; font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+          Порт: <strong>{{.Defaults.Port}}</strong> • Пользователь: <strong>{{if .Defaults.User}}{{.Defaults.User}}{{else}}admin{{end}}</strong> •
+          {{if .Defaults.InsecureIgnoreHostKey}}HostKey: <strong>без проверки</strong>{{else}}HostKey: <strong>строгая</strong>{{end}} •
+          {{if .Defaults.ExportSensitive}}Export: <strong>show-sensitive</strong>{{else}}Export: <strong>compact</strong>{{end}} •
+          {{if .Defaults.EncryptBackup}}Шифрование: <strong>включено</strong>{{else}}Шифрование: <strong>выключено</strong>{{end}}
         </div>
       </div>
 
-      <div class="form-actions">
+      <!-- Custom Settings Section (Collapsible) -->
+      <div id="custom_settings" style="display: {{if .UsesDefaults}}none{{else}}block{{end}};">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="port">SSH Порт</label>
+            <input type="number" id="port" name="port" value="{{if gt .Router.Port 0}}{{.Router.Port}}{{end}}" placeholder="По умолчанию: {{.Defaults.Port}}">
+          </div>
+
+          <div class="form-group">
+            <label for="user">SSH Пользователь</label>
+            <input type="text" id="user" name="user" value="{{.Router.User}}" placeholder="По умолчанию: {{if .Defaults.User}}{{.Defaults.User}}{{else}}admin{{end}}">
+          </div>
+
+          <div class="form-group full-width">
+            <label for="password">Пароль устройства</label>
+            <input type="password" id="password" name="password" value="{{.Router.Password}}" placeholder="По умолчанию: {{if .Defaults.Password}}••••••••{{else}}пусто{{end}}">
+          </div>
+
+          <div class="form-group">
+            <label for="private_key_path">Путь к SSH-ключу</label>
+            <input type="text" id="private_key_path" name="private_key_path" value="{{.Router.PrivateKeyPath}}" placeholder="По умолчанию: {{if .Defaults.PrivateKeyPath}}{{.Defaults.PrivateKeyPath}}{{else}}/path/to/key{{end}}">
+          </div>
+
+          <div class="form-group">
+            <label for="private_key_passphrase">Пароль от ключа</label>
+            <input type="password" id="private_key_passphrase" name="private_key_passphrase" value="{{.Router.PrivateKeyPassphrase}}" placeholder="Опционально">
+          </div>
+        </div>
+
+        <!-- Clean Checkboxes for Options -->
+        <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--surface-color); padding: 14px; border: 1px solid var(--border-color); border-radius: var(--radius-md);">
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px;">
+            <input type="checkbox" id="insecure_ignore_host_key" name="insecure_ignore_host_key"
+                   {{if .InsecureIgnoreHostKeyEffective}}checked{{end}}
+                   style="width: 16px; height: 16px; accent-color: var(--accent-color); cursor: pointer;">
+            <span>Отключить проверку SSH HostKey (insecure / для LAN)</span>
+          </label>
+
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px;">
+            <input type="checkbox" id="export_sensitive" name="export_sensitive"
+                   {{if .ExportSensitiveEffective}}checked{{end}}
+                   style="width: 16px; height: 16px; accent-color: var(--accent-color); cursor: pointer;">
+            <span>Включать чувствительные данные в экспорт (.rsc show-sensitive)</span>
+          </label>
+
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px;">
+            <input type="checkbox" id="encrypt_backup" name="encrypt_backup"
+                   {{if .EncryptBackupEffective}}checked{{end}}
+                   onchange="document.getElementById('backup_pwd_group').style.display = this.checked ? 'block' : 'none';"
+                   style="width: 16px; height: 16px; accent-color: var(--accent-color); cursor: pointer;">
+            <span>Шифровать бинарный бэкап паролем (.backup)</span>
+          </label>
+        </div>
+
+        <div class="form-group full-width" id="backup_pwd_group"
+             style="margin-top: 12px; display: {{if .EncryptBackupEffective}}block{{else}}none{{end}};">
+          <label for="backup_password">Пароль шифрования бэкапа</label>
+          <input type="password" id="backup_password" name="backup_password" value="{{.Router.BackupPassword}}"
+                 placeholder="По умолчанию: {{if .Defaults.BackupPassword}}••••••••{{else}}стойкий пароль шифрования{{end}}">
+        </div>
+      </div>
+
+      <div class="form-actions" style="margin-top: 20px;">
         <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML = ''">
           Отмена
         </button>

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -31,7 +30,9 @@ func TestSanitizeName(t *testing.T) {
 
 func TestPrepareDestination(t *testing.T) {
 	tempDir := t.TempDir()
-	s := New(tempDir)
+	binDir := filepath.Join(tempDir, "binary")
+	expDir := filepath.Join(tempDir, "exports")
+	s := New(binDir, expDir)
 
 	fixedTime := time.Date(2026, 11, 17, 10, 30, 0, 0, time.UTC)
 	paths, err := s.PrepareDestination("Core-Router/1", fixedTime)
@@ -39,27 +40,30 @@ func TestPrepareDestination(t *testing.T) {
 		t.Fatalf("PrepareDestination failed: %v", err)
 	}
 
-	expectedDir := filepath.Join(tempDir, "Core-Router_1", "2026-11-17")
-	if paths.DateDir != expectedDir {
-		t.Errorf("DateDir = %q, want %q", paths.DateDir, expectedDir)
+	expectedBackupPath := filepath.Join(binDir, "Core-Router_1", "Core-Router_1_2026-11-17_10-30-00.backup")
+	if paths.LocalBackupPath != expectedBackupPath {
+		t.Errorf("LocalBackupPath = %q, want %q", paths.LocalBackupPath, expectedBackupPath)
 	}
 
-	info, err := os.Stat(paths.DateDir)
+	expectedRscPath := filepath.Join(expDir, "Core-Router_1.rsc")
+	if paths.LocalRscPath != expectedRscPath {
+		t.Errorf("LocalRscPath = %q, want %q", paths.LocalRscPath, expectedRscPath)
+	}
+
+	info, err := os.Stat(filepath.Dir(paths.LocalBackupPath))
 	if err != nil || !info.IsDir() {
-		t.Fatalf("expected date directory to exist as a folder: %v", err)
+		t.Fatalf("expected binary router directory to exist as a folder: %v", err)
 	}
 
-	if !strings.HasSuffix(paths.LocalRscPath, "Core-Router_1_2026-11-17_10-30-00.rsc") {
-		t.Errorf("unexpected LocalRscPath: %q", paths.LocalRscPath)
-	}
-	if !strings.HasSuffix(paths.LocalBackupPath, "Core-Router_1_2026-11-17_10-30-00.backup") {
-		t.Errorf("unexpected LocalBackupPath: %q", paths.LocalBackupPath)
+	infoExp, err := os.Stat(expDir)
+	if err != nil || !infoExp.IsDir() {
+		t.Fatalf("expected export directory to exist as a folder: %v", err)
 	}
 }
 
 func TestSaveStreamAndVerify(t *testing.T) {
 	tempDir := t.TempDir()
-	s := New(tempDir)
+	s := New(filepath.Join(tempDir, "bin"), filepath.Join(tempDir, "exp"))
 	targetFile := filepath.Join(tempDir, "test.rsc")
 
 	content := []byte("/system identity set name=MyRouter\n")
@@ -82,24 +86,30 @@ func TestSaveStreamAndVerify(t *testing.T) {
 
 func TestRetentionRotate(t *testing.T) {
 	tempDir := t.TempDir()
-	s := New(tempDir)
+	binDir := filepath.Join(tempDir, "binary")
+	expDir := filepath.Join(tempDir, "exports")
+	s := New(binDir, expDir)
 
-	routerPath := filepath.Join(tempDir, "Router1", "2026-01-01")
+	routerPath := filepath.Join(binDir, "Router1")
 	if err := os.MkdirAll(routerPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	oldFile := filepath.Join(routerPath, "old.backup")
+	oldFile := filepath.Join(routerPath, "Router1_old.backup")
 	_ = os.WriteFile(oldFile, []byte("dummy backup data"), 0o644)
 
 	// Set mod time to 40 days ago
 	oldTime := time.Now().AddDate(0, 0, -40)
 	_ = os.Chtimes(oldFile, oldTime, oldTime)
 
-	recentPath := filepath.Join(tempDir, "Router1", "2026-11-17")
-	_ = os.MkdirAll(recentPath, 0o755)
-	recentFile := filepath.Join(recentPath, "recent.backup")
+	recentFile := filepath.Join(routerPath, "Router1_recent.backup")
 	_ = os.WriteFile(recentFile, []byte("recent backup data"), 0o644)
+
+	// In exportDir, place an old .rsc file. It should NOT be rotated!
+	_ = os.MkdirAll(expDir, 0o755)
+	rscFile := filepath.Join(expDir, "Router1.rsc")
+	_ = os.WriteFile(rscFile, []byte("# RouterOS export"), 0o644)
+	_ = os.Chtimes(rscFile, oldTime, oldTime)
 
 	// Rotate with 30 days retention
 	deleted, freed, err := s.Rotate(30, nil)
@@ -118,5 +128,9 @@ func TestRetentionRotate(t *testing.T) {
 	}
 	if _, err := os.Stat(recentFile); err != nil {
 		t.Errorf("expected recentFile to still exist")
+	}
+	// Export .rsc must not be touched
+	if _, err := os.Stat(rscFile); err != nil {
+		t.Errorf("expected rscFile in exportDir to remain untouched")
 	}
 }

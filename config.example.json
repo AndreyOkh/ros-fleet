@@ -1,5 +1,6 @@
 {
-  "backup_dir": "./backups",
+  "binary_backup_dir": "./backups/binary",
+  "export_dir": "./backups/exports",
   "state_file": "./state.json",
   "retention_days": 30,
   "concurrency": 5,
@@ -15,7 +16,7 @@
     "port": 22,
     "user": "backup_user",
     "password": "",
-    "private_key_path": "/home/user/.ssh/id_ed25519",
+    "private_key_path": "/home/rosfleet/.ssh/id_ed25519",
     "private_key_passphrase": "",
     "insecure_ignore_host_key": true,
     "export_sensitive": true,
@@ -24,7 +25,7 @@
   },
   "git": {
     "enabled": true,
-    "repo_dir": "./git-configs",
+    "remote_url": "git@github.com:your-org/mikrotik-configs.git",
     "branch": "main",
     "author_name": "ros-fleet",
     "author_email": "ros-fleet@local",
@@ -47,31 +48,24 @@
     {
       "enabled": true,
       "name": "Router-Core-CCR2004",
-      "host": "192.168.1.1",
-      "encrypt_backup": true,
-      "backup_password": "SuperSecretBackupPassword123!"
+      "host": "192.168.1.1"
     },
     {
       "enabled": true,
       "name": "Router-Office-RB4011",
       "host": "192.168.10.1",
-      "port": 22,
-      "user": "backup_user",
-      "password": "RouterPasswordExample",
-      "insecure_ignore_host_key": true,
-      "export_sensitive": true,
-      "encrypt_backup": false
+      "password": "RouterCustomPassword",
+      "encrypt_backup": true,
+      "backup_password": "SuperSecretBackupPassword123!"
     },
     {
       "enabled": false,
-      "name": "Router-Warehouse-v6",
+      "name": "Router-Warehouse-Legacy",
       "host": "10.50.0.1",
       "port": 2222,
       "user": "admin",
       "password": "LegacyPasswordExample",
-      "insecure_ignore_host_key": true,
-      "export_sensitive": false,
-      "encrypt_backup": false
+      "export_sensitive": false
     }
   ]
 }

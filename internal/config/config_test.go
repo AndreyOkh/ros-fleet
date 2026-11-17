@@ -39,8 +39,11 @@ func TestConfigLoadAndDefaults(t *testing.T) {
 	}
 
 	// Verify defaults
-	if cfg.BackupDir != "./backups" {
-		t.Errorf("expected BackupDir to default to './backups', got %q", cfg.BackupDir)
+	if cfg.BinaryBackupDir != "./backups/binary" {
+		t.Errorf("expected BinaryBackupDir to default to './backups/binary', got %q", cfg.BinaryBackupDir)
+	}
+	if cfg.ExportDir != "./backups/exports" {
+		t.Errorf("expected ExportDir to default to './backups/exports', got %q", cfg.ExportDir)
 	}
 	if cfg.StateFile != "./state.json" {
 		t.Errorf("expected StateFile to default to './state.json', got %q", cfg.StateFile)

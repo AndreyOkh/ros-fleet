@@ -59,7 +59,8 @@ func main() {
 	initialCfg := cfgMgr.Get()
 	logger.Info("Configuration loaded successfully",
 		slog.Int("routers_count", len(initialCfg.Routers)),
-		slog.String("backup_dir", initialCfg.BackupDir),
+		slog.String("binary_backup_dir", initialCfg.BinaryBackupDir),
+		slog.String("export_dir", initialCfg.ExportDir),
 		slog.String("state_file", initialCfg.StateFile),
 		slog.Int("concurrency", initialCfg.Concurrency),
 		slog.Any("schedule_times", initialCfg.Schedule.Times),
