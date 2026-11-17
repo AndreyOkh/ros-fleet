@@ -145,10 +145,23 @@ func TestServerToggleAndEndpoints(t *testing.T) {
 		t.Errorf("expected toggled row to have 'Отключен' badge")
 	}
 
-	// Test Add router (inheriting user & password from defaults)
+	// Test New Router Modal
+	reqNew := httptest.NewRequest(http.MethodGet, "/routers/new", nil)
+	rrNew := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrNew, reqNew)
+	if rrNew.Code != http.StatusOK {
+		t.Errorf("GET /routers/new returned %d", rrNew.Code)
+	}
+	if !strings.Contains(rrNew.Body.String(), "tri-state-toggle") {
+		t.Errorf("expected new router modal to contain tri-state-toggle")
+	}
+
+	// Test Add router (inheriting user & password from defaults, overriding insecure_ignore_host_key)
 	form := url.Values{}
 	form.Set("name", "Router-New")
 	form.Set("host", "10.0.0.1")
+	form.Set("insecure_ignore_host_key", "true")
+	form.Set("export_sensitive", "inherit")
 
 	reqAdd := httptest.NewRequest(http.MethodPost, "/routers", strings.NewReader(form.Encode()))
 	reqAdd.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -160,6 +173,17 @@ func TestServerToggleAndEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(rrAdd.Body.String(), "Router-New") {
 		t.Errorf("expected table to include 'Router-New'")
+	}
+
+	rc, found := srv.cfgMgr.GetRouter("Router-New")
+	if !found {
+		t.Fatalf("expected router Router-New to exist in config")
+	}
+	if rc.InsecureIgnoreHostKey == nil || !*rc.InsecureIgnoreHostKey {
+		t.Errorf("expected InsecureIgnoreHostKey to be true")
+	}
+	if rc.ExportSensitive != nil {
+		t.Errorf("expected ExportSensitive to be nil (inherited from defaults), got %v", *rc.ExportSensitive)
 	}
 }
 

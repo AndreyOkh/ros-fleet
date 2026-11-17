@@ -585,3 +585,103 @@ input:focus {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-secondary);
 }
+
+/* 3-State Segmented Oval Toggle (Выкл | По-умолчанию | Вкл) */
+.tri-state-group {
+  margin-top: 14px;
+  background: var(--surface-color);
+  padding: 12px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.tri-state-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.tri-state-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tri-state-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tri-state-toggle {
+  display: flex;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  padding: 3px;
+  gap: 2px;
+  position: relative;
+  user-select: none;
+}
+
+.tri-state-option {
+  flex: 1;
+  margin: 0;
+  cursor: pointer;
+  position: relative;
+  display: block;
+}
+
+.tri-state-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.tri-state-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.tri-state-pill small {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.tri-state-option:hover .tri-state-pill {
+  color: var(--text-primary);
+}
+
+.tri-state-option input[type="radio"]:checked + .pill-inherit {
+  background: var(--accent-color);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
+}
+
+.tri-state-option input[type="radio"]:checked + .pill-false {
+  background: var(--danger-color);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.35);
+}
+
+.tri-state-option input[type="radio"]:checked + .pill-true {
+  background: var(--success-color);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.35);
+}

@@ -61,13 +61,9 @@ type IndexData struct {
 
 // ModalData is passed to the router add/edit modal template.
 type ModalData struct {
-	IsEdit                         bool
-	Router                         config.RouterConfig
-	Defaults                       config.DefaultsConfig
-	UsesDefaults                   bool
-	InsecureIgnoreHostKeyEffective bool
-	ExportSensitiveEffective       bool
-	EncryptBackupEffective         bool
+	IsEdit   bool
+	Router   config.RouterConfig
+	Defaults config.DefaultsConfig
 }
 
 // DefaultsModalData is passed to the defaults modal template.
@@ -86,6 +82,15 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 				return false
 			}
 			return *b
+		},
+		"triState": func(b *bool) string {
+			if b == nil {
+				return "inherit"
+			}
+			if *b {
+				return "true"
+			}
+			return "false"
 		},
 	}
 
@@ -252,13 +257,9 @@ func (s *Server) handleSaveDefaults(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNewRouterModal(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfgMgr.Get()
 	data := ModalData{
-		IsEdit:                         false,
-		Router:                         config.RouterConfig{},
-		Defaults:                       cfg.Defaults,
-		UsesDefaults:                   true,
-		InsecureIgnoreHostKeyEffective: cfg.Defaults.InsecureIgnoreHostKey,
-		ExportSensitiveEffective:       cfg.Defaults.ExportSensitive,
-		EncryptBackupEffective:         cfg.Defaults.EncryptBackup,
+		IsEdit:   false,
+		Router:   config.RouterConfig{},
+		Defaults: cfg.Defaults,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
@@ -273,15 +274,10 @@ func (s *Server) handleEditRouterModal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.cfgMgr.Get()
-	eff := rc.Effective(cfg.Defaults)
 	data := ModalData{
-		IsEdit:                         true,
-		Router:                         rc,
-		Defaults:                       cfg.Defaults,
-		UsesDefaults:                   rc.UsesDefaults(),
-		InsecureIgnoreHostKeyEffective: eff.InsecureIgnoreHostKey,
-		ExportSensitiveEffective:       eff.ExportSensitive,
-		EncryptBackupEffective:         eff.EncryptBackup,
+		IsEdit:   true,
+		Router:   rc,
+		Defaults: cfg.Defaults,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
@@ -295,40 +291,40 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 
 	name := strings.TrimSpace(r.FormValue("name"))
 	host := strings.TrimSpace(r.FormValue("host"))
-	useDefaults := r.FormValue("use_defaults") == "on" || r.FormValue("use_defaults") == "true"
 
 	enabled := true
 	if existing, found := s.cfgMgr.GetRouter(name); found {
 		enabled = existing.IsEnabled()
 	}
 
-	var router config.RouterConfig
-	if useDefaults {
-		router = config.RouterConfig{
-			Enabled: &enabled,
-			Name:    name,
-			Host:    host,
+	parseTriState := func(val string) *bool {
+		switch val {
+		case "true":
+			b := true
+			return &b
+		case "false":
+			b := false
+			return &b
+		default: // "inherit" or empty
+			return nil
 		}
-	} else {
-		port, _ := strconv.Atoi(r.FormValue("port"))
-		insecure := r.FormValue("insecure_ignore_host_key") == "on"
-		sensitive := r.FormValue("export_sensitive") == "on"
-		encrypt := r.FormValue("encrypt_backup") == "on"
+	}
 
-		router = config.RouterConfig{
-			Enabled:               &enabled,
-			Name:                  name,
-			Host:                  host,
-			Port:                  port,
-			User:                  strings.TrimSpace(r.FormValue("user")),
-			Password:              strings.TrimSpace(r.FormValue("password")),
-			PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
-			PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
-			InsecureIgnoreHostKey: &insecure,
-			ExportSensitive:       &sensitive,
-			EncryptBackup:         &encrypt,
-			BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
-		}
+	port, _ := strconv.Atoi(r.FormValue("port"))
+
+	router := config.RouterConfig{
+		Enabled:               &enabled,
+		Name:                  name,
+		Host:                  host,
+		Port:                  port,
+		User:                  strings.TrimSpace(r.FormValue("user")),
+		Password:              strings.TrimSpace(r.FormValue("password")),
+		PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
+		PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
+		InsecureIgnoreHostKey: parseTriState(r.FormValue("insecure_ignore_host_key")),
+		ExportSensitive:       parseTriState(r.FormValue("export_sensitive")),
+		EncryptBackup:         parseTriState(r.FormValue("encrypt_backup")),
+		BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
 	}
 
 	if err := s.cfgMgr.UpsertRouter(router); err != nil {
