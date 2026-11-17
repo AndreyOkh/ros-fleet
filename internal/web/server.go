@@ -1,0 +1,386 @@
+package web
+
+import (
+	"context"
+	"fmt"
+	"html/template"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/AndreyOkh/ros-fleet/internal/config"
+	"github.com/AndreyOkh/ros-fleet/internal/runner"
+	"github.com/AndreyOkh/ros-fleet/internal/state"
+	"github.com/AndreyOkh/ros-fleet/web"
+)
+
+// Server coordinates the web dashboard, API endpoints, and template rendering.
+type Server struct {
+	httpServer *http.Server
+	cfgMgr     *config.Manager
+	runner     *runner.Runner
+	registry   *state.Registry
+	logger     *slog.Logger
+	templates  *template.Template
+}
+
+// TableRowData combines configuration and live state for a single table row.
+type TableRowData struct {
+	Router config.RouterConfig
+	State  state.DeviceState
+}
+
+// TableData contains all rows for the main device table.
+type TableData struct {
+	Items []TableRowData
+}
+
+// SummaryData contains KPI card stats for the dashboard header.
+type SummaryData struct {
+	TotalCount   int
+	ActiveCount  int
+	SuccessCount int
+	FailedCount  int
+	Interval     string
+}
+
+// IndexData is passed to the main index.html template.
+type IndexData struct {
+	Summary SummaryData
+	Table   TableData
+}
+
+// ModalData is passed to the router add/edit modal template.
+type ModalData struct {
+	IsEdit bool
+	Router config.RouterConfig
+}
+
+// NewServer initializes the HTTP server, parses templates, and registers routes.
+func NewServer(cfgMgr *config.Manager, runner *runner.Runner, registry *state.Registry, logger *slog.Logger) (*Server, error) {
+	log := logger.With(slog.String("component", "web_server"))
+
+	tmplFuncs := template.FuncMap{
+		"formatBytes": formatBytes,
+		"derefBool": func(b *bool) bool {
+			if b == nil {
+				return false
+			}
+			return *b
+		},
+	}
+
+	tmpl, err := template.New("").Funcs(tmplFuncs).ParseFS(web.Assets, "templates/*.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse embedded templates: %w", err)
+	}
+
+	s := &Server{
+		cfgMgr:    cfgMgr,
+		runner:    runner,
+		registry:  registry,
+		logger:    log,
+		templates: tmpl,
+	}
+
+	mux := http.NewServeMux()
+
+	// Static assets from embedded FS
+	staticFS, err := fs.Sub(web.Assets, "static")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load static sub-filesystem: %w", err)
+	}
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+
+	// Dashboard routes
+	mux.HandleFunc("GET /", s.handleIndex)
+	mux.HandleFunc("GET /dashboard/summary", s.handleSummaryCards)
+	mux.HandleFunc("GET /routers/table", s.handleTable)
+
+	// Router management routes
+	mux.HandleFunc("GET /routers/new", s.handleNewRouterModal)
+	mux.HandleFunc("GET /routers/{name}/edit", s.handleEditRouterModal)
+	mux.HandleFunc("POST /routers", s.handleSaveRouter)
+	mux.HandleFunc("POST /routers/{name}/toggle", s.handleToggleRouter)
+	mux.HandleFunc("POST /routers/{name}/backup", s.handleBackupSingle)
+	mux.HandleFunc("POST /routers/{name}/refresh", s.handleRefreshSingle)
+	mux.HandleFunc("DELETE /routers/{name}", s.handleDeleteRouter)
+
+	// Bulk backup route
+	mux.HandleFunc("POST /backup/all", s.handleBackupAll)
+
+	cfg := cfgMgr.Get()
+	var handler http.Handler = mux
+
+	// Basic Auth middleware if configured
+	if cfg.Web.AuthUser != "" && cfg.Web.AuthPassword != "" {
+		handler = basicAuthMiddleware(cfg.Web.AuthUser, cfg.Web.AuthPassword, mux)
+		log.Info("Basic Auth enabled for web dashboard", slog.String("user", cfg.Web.AuthUser))
+	}
+
+	s.httpServer = &http.Server{
+		Addr:    cfg.Web.ListenAddr,
+		Handler: handler,
+	}
+
+	return s, nil
+}
+
+// Start launches the HTTP server in a background goroutine.
+func (s *Server) Start() error {
+	s.logger.Info("Starting web dashboard", slog.String("listen_addr", s.httpServer.Addr))
+	go func() {
+		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Error("Web server ListenAndServe error", slog.Any("error", err))
+		}
+	}()
+	return nil
+}
+
+// Shutdown gracefully shuts down the HTTP server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.logger.Info("Shutting down web server...")
+	return s.httpServer.Shutdown(ctx)
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	data := IndexData{
+		Summary: s.buildSummaryData(),
+		Table:   s.buildTableData(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "index.html", data); err != nil {
+		s.logger.Error("Template render error (index.html)", slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleSummaryCards(w http.ResponseWriter, r *http.Request) {
+	summary := s.buildSummaryData()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.templates.ExecuteTemplate(w, "summary_cards.html", summary)
+}
+
+func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
+	table := s.buildTableData()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.templates.ExecuteTemplate(w, "table_container.html", table)
+}
+
+func (s *Server) handleNewRouterModal(w http.ResponseWriter, r *http.Request) {
+	data := ModalData{
+		IsEdit: false,
+		Router: config.RouterConfig{Port: 22, User: "admin"},
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
+}
+
+func (s *Server) handleEditRouterModal(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	rc, found := s.cfgMgr.GetRouter(name)
+	if !found {
+		http.Error(w, "Router not found", http.StatusNotFound)
+		return
+	}
+
+	data := ModalData{
+		IsEdit: true,
+		Router: rc,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
+}
+
+func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	port, _ := strconv.Atoi(r.FormValue("port"))
+	if port <= 0 {
+		port = 22
+	}
+
+	insecureIgnore := r.FormValue("insecure_ignore_host_key") == "true"
+	exportSensitive := r.FormValue("export_sensitive") == "true"
+	encryptBackup := r.FormValue("encrypt_backup") == "true"
+
+	router := config.RouterConfig{
+		Name:                  strings.TrimSpace(r.FormValue("name")),
+		Host:                  strings.TrimSpace(r.FormValue("host")),
+		Port:                  port,
+		User:                  strings.TrimSpace(r.FormValue("user")),
+		Password:              strings.TrimSpace(r.FormValue("password")),
+		PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
+		PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
+		InsecureIgnoreHostKey: &insecureIgnore,
+		ExportSensitive:       exportSensitive,
+		EncryptBackup:         encryptBackup,
+		BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
+	}
+
+	if err := s.cfgMgr.UpsertRouter(router); err != nil {
+		s.logger.Error("Failed to upsert router", slog.Any("error", err))
+		http.Error(w, fmt.Sprintf("Error saving router: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Re-render table
+	s.handleTable(w, r)
+}
+
+func (s *Server) handleToggleRouter(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	_, err := s.cfgMgr.ToggleRouter(name)
+	if err != nil {
+		s.logger.Error("Failed to toggle router", slog.String("router", name), slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.renderSingleRow(w, name)
+}
+
+func (s *Server) handleBackupSingle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	s.logger.Info("Manual backup triggered via Web UI", slog.String("router", name))
+
+	// Run backup in request context
+	_, _ = s.runner.RunSingle(r.Context(), name)
+
+	s.renderSingleRow(w, name)
+}
+
+func (s *Server) handleRefreshSingle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	s.logger.Info("Device telemetry refresh triggered via Web UI", slog.String("router", name))
+
+	_, _ = s.runner.RefreshDevice(r.Context(), name)
+
+	s.renderSingleRow(w, name)
+}
+
+func (s *Server) handleDeleteRouter(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.cfgMgr.DeleteRouter(name); err != nil {
+		s.logger.Error("Failed to delete router", slog.String("router", name), slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.handleTable(w, r)
+}
+
+func (s *Server) handleBackupAll(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info("Backup all triggered via Web UI")
+	_, _ = s.runner.Run(r.Context())
+
+	s.handleTable(w, r)
+}
+
+func (s *Server) renderSingleRow(w http.ResponseWriter, name string) {
+	rc, found := s.cfgMgr.GetRouter(name)
+	if !found {
+		http.Error(w, "Router not found", http.StatusNotFound)
+		return
+	}
+
+	st, _ := s.registry.Get(name)
+	row := TableRowData{Router: rc, State: st}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "table_row.html", row); err != nil {
+		s.logger.Error("Template render error (table_row.html)", slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) buildTableData() TableData {
+	routers := s.cfgMgr.ListRouters()
+	states := s.registry.GetAll()
+
+	items := make([]TableRowData, 0, len(routers))
+	for _, r := range routers {
+		st, exists := states[r.Name]
+		if !exists {
+			st = state.DeviceState{
+				Name:    r.Name,
+				Host:    r.Host,
+				Port:    r.Port,
+				Model:   "Unknown",
+				Version: "Unknown",
+				Status:  state.StatusNeverRun,
+			}
+		}
+		items = append(items, TableRowData{
+			Router: r,
+			State:  st,
+		})
+	}
+	return TableData{Items: items}
+}
+
+func (s *Server) buildSummaryData() SummaryData {
+	cfg := s.cfgMgr.Get()
+	states := s.registry.GetAll()
+
+	activeCount := 0
+	for _, r := range cfg.Routers {
+		if r.IsEnabled() {
+			activeCount++
+		}
+	}
+
+	successCount := 0
+	failedCount := 0
+	for _, st := range states {
+		if st.Status == state.StatusSuccess {
+			successCount++
+		} else if st.Status == state.StatusError {
+			failedCount++
+		}
+	}
+
+	return SummaryData{
+		TotalCount:   len(cfg.Routers),
+		ActiveCount:  activeCount,
+		SuccessCount: successCount,
+		FailedCount:  failedCount,
+		Interval:     cfg.ScheduleInterval,
+	}
+}
+
+func basicAuthMiddleware(user, pass string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok || u != user || p != pass {
+			w.Header().Set("WWW-Authenticate", `Basic realm="ros-fleet"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}

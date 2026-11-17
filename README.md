@@ -1,62 +1,87 @@
-# RealMikrotikBackup
+# ros-fleet
 
-Высокопроизводительное, надежное и идиоматичное консольное приложение на **Go 1.24+** для автоматического резервного копирования сетевого оборудования **MikroTik RouterOS (версий v6 и v7)**.
+Высокопроизводительная, надежная система управления парком сетевого оборудования **MikroTik RouterOS (v6 и v7)** и автоматического резервного копирования на **Go 1.24+**.
 
-## Ключевые возможности и инженерные решения
+Модуль: `github.com/AndreyOkh/ros-fleet`
 
-- **Минимум внешних зависимостей:**
-  - Вся работа с SSH построена на официальном `golang.org/x/crypto/ssh`.
-  - Скачивание файлов по безопасному протоколу SFTP через `github.com/pkg/sftp`.
-  - Никаких тяжелых фреймворков: `encoding/json` для конфигурации, `net/http` для Telegram API, `log/slog` для структурированного логирования.
+## Возможности
+
+- **Встроенный Web-интерфейс (Zero-Build / Single Binary):**
+  - Работает без внешних Node.js/npm зависимостей: весь фронтенд вшит в бинарник через `embed.FS`.
+  - Реактивный UI на базе **HTMX** (динамическое переключение тогглов, запуск бэкапа, опрос роутеров без перезагрузки страницы).
+  - Минималистичный и чистый CSS с поддержкой **темной и светлой темы**.
+  - Опциональная авторизация через **HTTP Basic Auth** (`web.auth_user`, `web.auth_password`).
+- **Сбор телеметрии в рантайме (In-Memory State):**
+  - Опрос оборудования по SSH (`/system resource print` и `/system routerboard print`).
+  - Определение модели (например, `RB4011iGS+`, `CCR2004-1G-12S+2XS`, `CHR`, `x86`) и версии RouterOS (например, `7.16.1 (stable)`).
+  - Отслеживание онлайн-статуса и истории последнего бэкапа (успех / ошибка с деталями).
+  - Обновление информации как по расписанию/бэкапу, так и по кнопке «Обновить инфо» в дашборде.
+- **Потокобезопасная работа с конфигурацией:**
+  - `ConfigManager` с `sync.RWMutex` для безопасного чтения и изменения конфигурации из веб-интерфейса на лету.
+  - Атомарное сохранение изменений в `config.json` (запись во временный файл + `os.Rename`).
+  - Флаг `enabled` для каждого роутера: можно временно отключать бэкап устройства без его удаления.
 - **Поддержка RouterOS v6 и RouterOS v7:**
-  - Умная поддержка sensitive-данных: на RouterOS v7 выполняется `/export show-sensitive file=...`, с автоматическим бесшовным фолбэком на классический `/export file=...` на RouterOS v6.
-  - Поддержка шифрования бинарного бэкапа: при заданном пароле `/system backup save name=... password="..."`, при отключенном шифровании используется обязательный для v7 флаг `dont-encrypt=yes` (с фолбэком для старых v6).
-- **Конкурентность и безопасность:**
-  - Ограничение числа параллельных соединений (Worker Pool / Semaphore) через `concurrency` в конфигурации.
-  - Таймауты и отмена операций на базе `context.Context` на каждом этапе (dial, handshake, exec, sftp, write).
-  - Поддержка Graceful Shutdown (`SIGINT`, `SIGTERM`): начатые бэкапы завершаются корректно, новые не стартуют.
+  - Умная поддержка sensitive-данных: `/export show-sensitive file=...` на v7 с автоматическим фолбэком на классический `/export file=...` на v6.
+  - Поддержка шифрования бинарного бэкапа: при заданном пароле `/system backup save name=... password="..."`, при отключенном шифровании используется флаг `dont-encrypt=yes` (RouterOS v7) с фолбэком для старых v6.
+- **Безопасность и конкурентность:**
+  - Ограничение одновременных подключений (Worker Pool / Semaphore) через параметр `concurrency`.
+  - Таймауты и отмена операций на базе `context.Context`.
+  - Плавное завершение работы (Graceful Shutdown) по сигналам `SIGINT` и `SIGTERM`.
 - **Бережное отношение к Flash-памяти роутеров:**
-  - Автоматическое ожидание и валидация готовности асинхронной записи файлов на накопитель MikroTik (root или `flash/`).
+  - Ожидание завершения асинхронной записи файлов на накопитель роутера (root или `flash/`).
   - Проверка целостности локального файла (размер > 0 байт) перед удалением с устройства.
-  - Гарантированная зачистка временных файлов `.rsc` и `.backup` с роутера через CLI RouterOS и SFTP.
+  - Очистка временных файлов `.rsc` и `.backup` с роутера через CLI и SFTP.
 - **Локальная ротация (Retention Policy):**
-  - Автоматическое удаление архивов старше заданного `retention_days`.
-  - Чистая файловая структура: `<backup_dir>/<router_name>/<YYYY-MM-DD>/<router_name>_<YYYY-MM-DD_HH-MM-SS>.[rsc|backup]`.
+  - Удаление архивов старше заданного `retention_days`.
+  - Структура: `<backup_dir>/<router_name>/<YYYY-MM-DD>/<router_name>_<YYYY-MM-DD_HH-MM-SS>.[rsc|backup]`.
 - **Telegram-уведомления:**
-  - Подробный и красивый сводный отчет в формате HTML.
-  - Автоматическое экранирование спецсимволов.
-  - Безопасное разбиение сообщений, если отчет превышает лимит Telegram (4096 символов).
-  - Возможность отключить отчеты при полном успехе (`notify_on_success: false`).
+  - HTML-отчет с экранированием спецсимволов и авторазбивкой длинных сообщений.
 
 ---
 
 ## Структура проекта
 
 ```
-real-mikrotik-backup/
+ros-fleet/
 ├── cmd/
-│   └── backup/
-│       └── main.go                 # Точка входа, флаги, slog, OS signals, scheduler
+│   └── ros-fleet/
+│       └── main.go                 # Точка входа, флаги CLI, slog, graceful shutdown, планировщик
 ├── internal/
 │   ├── config/
-│   │   ├── config.go              # Загрузка, валидация и дефолты config.json
-│   │   └── config_test.go         # Тесты валидации и дефолтов
+│   │   ├── config.go              # Модель конфигурации, Manager (sync.RWMutex), атомарный save
+│   │   └── config_test.go         # Unit-тесты парсинга, валидации и Manager
 │   ├── mikrotik/
-│   │   └── client.go              # SSH/SFTP клиент, RouterOS v6/v7 команды, polling, cleanup
+│   │   └── client.go              # SSH/SFTP клиент, сбор DeviceInfo, RouterOS v6/v7 команды, cleanup
 │   ├── notifier/
 │   │   ├── telegram.go            # HTML-отчет и HTTP-клиент Telegram API
-│   │   └── telegram_test.go       # Тесты форматирования, экранирования и chunking
+│   │   └── telegram_test.go       # Unit-тесты Telegram-уведомлений
 │   ├── runner/
-│   │   ├── runner.go              # Оркестрация бэкапа, Worker Pool, сбор метрик
-│   │   └── runner_test.go         # Тесты конкурентности и context cancellation
-│   └── storage/
-│       ├── storage.go             # Атомарная запись (.tmp -> target), проверка и ротация
-│       └── storage_test.go        # Тесты путей, санитизации и ротации
+│   │   ├── runner.go              # Worker Pool, оркестрация, RunSingle, RefreshDevice
+│   │   └── runner_test.go         # Unit-тесты конкурентности и context cancellation
+│   ├── state/
+│   │   └── state.go               # In-memory реестр устройств (sync.RWMutex), статусы, телеметрия
+│   ├── storage/
+│   │   ├── storage.go             # Атомарная запись (.tmp -> target), валидация, ротация
+│   │   └── storage_test.go        # Unit-тесты storage и ротации
+│   └── web/
+│       ├── server.go              # HTTP-сервер (Go 1.22+ routing), Basic Auth, HTMX-обработчики
+│       └── server_test.go         # Интеграционные тесты веб-интерфейса и API
+├── web/
+│   ├── web.go                     # embed.FS для шаблонов и статики
+│   ├── static/
+│   │   ├── htmx.min.js            # Автономный embedded HTMX
+│   │   └── style.css              # Адаптивные стили (Dark/Light mode)
+│   └── templates/
+│       ├── index.html             # Главная страница дашборда
+│       ├── summary_cards.html     # KPI-карточки сводки
+│       ├── table_container.html   # Контейнер таблицы устройств
+│       ├── table_row.html         # Шаблон строки устройства (HTMX swap)
+│       └── router_modal.html      # Модальное окно добавления/редактирования
+├── compose.yaml                   # Docker Compose спецификация
+├── Dockerfile                     # Мультистейдж сборка статического бинарника
+├── ros-fleet.service              # Systemd unit для Linux
 ├── config.example.json            # Пример конфигурации
-├── Dockerfile                     # Мультистейдж сборка (минимальный Alpine)
-├── docker-compose.yml             # Запуск в Docker Compose
-├── mikrotik-backup.service        # Systemd unit для Linux
-├── Makefile                       # Таргеты сборки и тестов
+├── Makefile                       # Сборка, тесты и кросс-компиляция
 ├── go.mod
 └── go.sum
 ```
@@ -64,11 +89,6 @@ real-mikrotik-backup/
 ---
 
 ## Конфигурация (`config.json`)
-
-Скопируйте пример:
-```bash
-cp config.example.json config.json
-```
 
 ```json
 {
@@ -78,6 +98,12 @@ cp config.example.json config.json
   "timeout_sec": 120,
   "schedule_interval": "24h",
   "insecure_ignore_host_key": true,
+  "web": {
+    "enabled": true,
+    "listen_addr": ":8080",
+    "auth_user": "admin",
+    "auth_password": ""
+  },
   "telegram": {
     "enabled": true,
     "bot_token": "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ",
@@ -86,6 +112,7 @@ cp config.example.json config.json
   },
   "routers": [
     {
+      "enabled": true,
       "name": "Router-Core-CCR2004",
       "host": "192.168.1.1",
       "port": 22,
@@ -95,9 +122,10 @@ cp config.example.json config.json
       "insecure_ignore_host_key": true,
       "export_sensitive": true,
       "encrypt_backup": true,
-      "backup_password": "SuperSecretPassword123!"
+      "backup_password": "SuperSecretBackupPassword123!"
     },
     {
+      "enabled": true,
       "name": "Router-Office-RB4011",
       "host": "192.168.10.1",
       "port": 22,
@@ -111,145 +139,48 @@ cp config.example.json config.json
 }
 ```
 
-### Описание параметров
-
-| Параметр | Тип | Описание |
-|---|---|---|
-| `backup_dir` | string | Путь к директории для хранения бэкапов (по умолчанию `./backups`) |
-| `retention_days` | int | Срок хранения бэкапов в днях (0 = ротация отключена) |
-| `concurrency` | int | Максимальное число параллельных сессий к роутерам (по умолчанию 5) |
-| `timeout_sec` | int | Таймаут на одну операцию бэкапа роутера (по умолчанию 120 сек) |
-| `schedule_interval`| string | Интервал запуска в режиме демона (`"24h"`, `"12h"`, `"30m"`) |
-| `insecure_ignore_host_key` | bool | Глобальное отключение строгой проверки Host Key |
-| `telegram.enabled` | bool | Включение отправки отчетов в Telegram |
-| `telegram.bot_token` | string | Токен Telegram бота |
-| `telegram.chat_id` | string | ID чата или группы (для групп обычно начинается с `-100`) |
-| `telegram.notify_on_success`| bool | Отправлять ли отчет, если все бэкапы завершились успешно |
-| `routers[].name` | string | Имя роутера (используется в директориях и именах файлов) |
-| `routers[].host` | string | IP-адрес или DNS-имя |
-| `routers[].port` | int | SSH-порт (по умолчанию 22) |
-| `routers[].user` | string | Пользователь RouterOS |
-| `routers[].password` | string | Пароль (опционально, если используется ключ) |
-| `routers[].private_key_path` | string | Путь к SSH приватному ключу (OpenSSH / RSA / ED25519) |
-| `routers[].private_key_passphrase` | string | Пароль приватного ключа (если ключ зашифрован) |
-| `routers[].insecure_ignore_host_key` | bool | Локальный оверрайд проверки SSH host key для конкретного роутера |
-| `routers[].export_sensitive` | bool | Включать ли пароли/ключи в `.rsc` экспорт (для RouterOS v7) |
-| `routers[].encrypt_backup` | bool | Шифровать ли бинарный `.backup` файл |
-| `routers[].backup_password` | string | Пароль шифрования бинарного бэкапа |
-
 ---
 
-## Сборка
+## Сборка и запуск
 
-### 1. Локальная сборка
+### 1. Статический бинарник без CGO:
 ```bash
-go build -o bin/real-mikrotik-backup ./cmd/backup
+make build-static
 ```
-
-### 2. Кросс-компиляция статического бинарника без CGO (`CGO_ENABLED=0`)
-Для Linux amd64:
+Или вручную:
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
   -trimpath \
   -ldflags="-s -w -extldflags '-static'" \
-  -o bin/real-mikrotik-backup-linux-amd64 \
-  ./cmd/backup
+  -o bin/ros-fleet-linux-amd64 \
+  ./cmd/ros-fleet
 ```
 
-Для Linux arm64 (Raspberry Pi / ARM-серверы):
+### 2. Запуск в фоновом режиме (демон + Web UI):
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
-  -trimpath \
-  -ldflags="-s -w -extldflags '-static'" \
-  -o bin/real-mikrotik-backup-linux-arm64 \
-  ./cmd/backup
+./bin/ros-fleet-linux-amd64 -config config.json
 ```
+После запуска откройте в браузере: `http://localhost:8080`.
 
-Либо через Makefile:
+### 3. Однократный запуск бэкапа без веб-сервера (для cron):
 ```bash
-make build-static
+./bin/ros-fleet-linux-amd64 -config config.json -once
 ```
 
----
-
-## Запуск
-
-### Флаги командной строки
-
-- `-config string`: путь к файлу конфигурации (по умолчанию `"config.json"`).
-- `-once`: запустить бэкап один раз и завершить процесс (идеально для внешних cron-задач).
-- `-log-level string`: уровень логирования (`debug`, `info`, `warn`, `error`; по умолчанию `"info"`).
-- `-log-format string`: формат логов (`text` для консоли, `json` для систем сбора логов типа Vector/Loki).
-- `-version`: показать версию приложения.
-
-### Однократный запуск
+### 4. Запуск в Docker Compose:
 ```bash
-./bin/real-mikrotik-backup -config config.json -once
+docker compose up -d
 ```
-
-### Фоновый режим (Daemon)
+Логи:
 ```bash
-./bin/real-mikrotik-backup -config config.json
+docker compose logs -f
 ```
-При запуске без флага `-once` приложение:
-1. Выполняет начальный цикл бэкапа сразу при старте.
-2. Запускает планировщик с интервалом `schedule_interval`.
-3. Ожидает сигналы `SIGINT`/`SIGTERM` для плавного завершения.
 
----
-
-## Развертывание
-
-### Вариант 1: Systemd (Linux)
-
-1. Скопируйте скомпилированный бинарник:
-   ```bash
-   sudo mkdir -p /opt/mikrotik-backup
-   sudo cp bin/real-mikrotik-backup-linux-amd64 /opt/mikrotik-backup/mikrotik-backup
-   sudo cp config.json /opt/mikrotik-backup/config.json
-   ```
-2. Создайте пользователя:
-   ```bash
-   sudo useradd -r -s /bin/false mikrotik-backup
-   sudo chown -R mikrotik-backup:mikrotik-backup /opt/mikrotik-backup
-   sudo chmod 600 /opt/mikrotik-backup/config.json
-   ```
-3. Установите systemd unit:
-   ```bash
-   sudo cp mikrotik-backup.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now mikrotik-backup.service
-   ```
-4. Просмотр логов:
-   ```bash
-   journalctl -u mikrotik-backup.service -f
-   ```
-
-### Вариант 2: Docker Compose
-
-1. Настройте `config.json`.
-2. Запустите контейнер:
-   ```bash
-   docker compose up -d
-   ```
-3. Просмотр логов:
-   ```bash
-   docker compose logs -f
-   ```
-
----
-
-## Настройка пользователя в RouterOS (Best Practices)
-
-Для максимальной безопасности на роутерах MikroTik рекомендуется создать отдельную группу и пользователя с минимально необходимыми правами:
-
-```routeros
-# Создаем группу с правами чтения, бэкапа, экспорта, файлов и ssh/ftp
-/user group add name=backup-group policy=read,write,policy,test,password,sensitive,ftp
-
-# Создаем пользователя
-/user add name=backup_user group=backup-group password="StrongPasswordHere"
-
-# (Опционально) Привязка SSH-ключа
-/user ssh-keys import public-key-file=id_ed25519.pub user=backup_user
+### 5. Запуск через systemd:
+```bash
+sudo cp bin/ros-fleet-linux-amd64 /opt/ros-fleet/ros-fleet
+sudo cp config.example.json /opt/ros-fleet/config.json
+sudo cp ros-fleet.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ros-fleet.service
 ```

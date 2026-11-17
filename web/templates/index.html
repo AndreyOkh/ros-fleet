@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ros-fleet | MikroTik RouterOS Fleet Management</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-icon">📡</div>
+        <div>
+          <h1 class="brand-title">ros-fleet</h1>
+          <p class="brand-subtitle">Централизованное управление парком и бэкапами MikroTik RouterOS</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button class="btn btn-secondary"
+                hx-get="/routers/new"
+                hx-target="#modal-container"
+                hx-swap="innerHTML">
+          <span>➕</span> Добавить роутер
+        </button>
+
+        <button class="btn btn-primary"
+                hx-post="/backup/all"
+                hx-target="#routers-table-container"
+                hx-swap="innerHTML"
+                hx-indicator="#global-backup-indicator">
+          <span>⚡</span> Запустить бэкап всех
+          <span class="htmx-indicator" id="global-backup-indicator">
+            <span class="spinner"></span>
+          </span>
+        </button>
+      </div>
+    </header>
+
+    <!-- KPI Summary Grid -->
+    <div id="summary-cards-container" hx-get="/dashboard/summary" hx-trigger="load, every 15s" hx-swap="innerHTML">
+      {{template "summary_cards.html" .Summary}}
+    </div>
+
+    <!-- Main Content: Device Table -->
+    <div class="section-header">
+      <h2 class="section-title">Оборудование парка</h2>
+      <div>
+        <button class="btn btn-sm btn-secondary"
+                hx-get="/routers/table"
+                hx-target="#routers-table-container"
+                hx-swap="innerHTML">
+          <span>🔄</span> Обновить таблицу
+        </button>
+      </div>
+    </div>
+
+    <div id="routers-table-container">
+      {{template "table_container.html" .Table}}
+    </div>
+  </div>
+
+  <!-- Modal Container for Add/Edit Dialogs -->
+  <div id="modal-container"></div>
+
+</body>
+</html>

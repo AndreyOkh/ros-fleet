@@ -1,0 +1,23 @@
+[Unit]
+Description=ros-fleet: MikroTik RouterOS Fleet & Backup Management Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rosfleet
+Group=rosfleet
+WorkingDirectory=/opt/ros-fleet
+ExecStart=/opt/ros-fleet/ros-fleet -config /opt/ros-fleet/config.json
+Restart=always
+RestartSec=15
+TimeoutStopSec=30
+
+# Security Hardening
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

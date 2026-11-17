@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/username/real-mikrotik-backup/internal/config"
+	"github.com/AndreyOkh/ros-fleet/internal/config"
 )
 
 func TestFormatBytes(t *testing.T) {

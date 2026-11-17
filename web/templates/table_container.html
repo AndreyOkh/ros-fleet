@@ -1,0 +1,26 @@
+<div class="card-table">
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 60px;">Бэкап</th>
+          <th>Устройство</th>
+          <th>Оборудование и ОС</th>
+          <th>Состояние бэкапа</th>
+          <th style="text-align: right; width: 230px;">Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Items}}
+          {{template "table_row.html" .}}
+        {{else}}
+          <tr>
+            <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 32px;">
+              Устройства не найдены. Добавьте ваш первый MikroTik роутер!
+            </td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>

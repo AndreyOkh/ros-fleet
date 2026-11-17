@@ -5,6 +5,12 @@
   "timeout_sec": 120,
   "schedule_interval": "24h",
   "insecure_ignore_host_key": true,
+  "web": {
+    "enabled": true,
+    "listen_addr": ":8080",
+    "auth_user": "admin",
+    "auth_password": ""
+  },
   "telegram": {
     "enabled": true,
     "bot_token": "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ",
@@ -13,6 +19,7 @@
   },
   "routers": [
     {
+      "enabled": true,
       "name": "Router-Core-CCR2004",
       "host": "192.168.1.1",
       "port": 22,
@@ -25,6 +32,7 @@
       "backup_password": "SuperSecretBackupPassword123!"
     },
     {
+      "enabled": true,
       "name": "Router-Office-RB4011",
       "host": "192.168.10.1",
       "port": 22,
@@ -35,6 +43,7 @@
       "encrypt_backup": false
     },
     {
+      "enabled": false,
       "name": "Router-Warehouse-v6",
       "host": "10.50.0.1",
       "port": 2222,

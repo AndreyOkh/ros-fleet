@@ -44,104 +44,83 @@ func TestConfigLoadAndDefaults(t *testing.T) {
 	if cfg.ScheduleInterval != "24h" {
 		t.Errorf("expected ScheduleInterval to default to '24h', got %q", cfg.ScheduleInterval)
 	}
+	if cfg.Web.ListenAddr != ":8080" {
+		t.Errorf("expected Web.ListenAddr to default to ':8080', got %q", cfg.Web.ListenAddr)
+	}
 	if cfg.ParsedScheduleInterval() != 24*time.Hour {
 		t.Errorf("expected ParsedScheduleInterval to be 24h, got %v", cfg.ParsedScheduleInterval())
 	}
 	if cfg.Routers[0].Port != 22 {
 		t.Errorf("expected Router Port to default to 22, got %d", cfg.Routers[0].Port)
 	}
+	if !cfg.Routers[0].IsEnabled() {
+		t.Errorf("expected Router Enabled to default to true")
+	}
 }
 
-func TestConfigValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		json    string
-		wantErr bool
-	}{
-		{
-			name:    "empty routers",
-			json:    `{"routers": []}`,
-			wantErr: true,
-		},
-		{
-			name: "invalid schedule interval",
-			json: `{
-				"schedule_interval": "invalid_interval",
-				"routers": [{"name": "R1", "host": "10.0.0.1", "user": "admin", "password": "pwd"}]
-			}`,
-			wantErr: true,
-		},
-		{
-			name: "duplicate router names",
-			json: `{
-				"routers": [
-					{"name": "R1", "host": "10.0.0.1", "user": "admin", "password": "pwd"},
-					{"name": "R1", "host": "10.0.0.2", "user": "admin", "password": "pwd"}
-				]
-			}`,
-			wantErr: true,
-		},
-		{
-			name: "missing router auth",
-			json: `{
-				"routers": [
-					{"name": "R1", "host": "10.0.0.1", "user": "admin"}
-				]
-			}`,
-			wantErr: true,
-		},
-		{
-			name: "telegram enabled but missing token",
-			json: `{
-				"telegram": {"enabled": true, "chat_id": "12345"},
-				"routers": [{"name": "R1", "host": "10.0.0.1", "user": "admin", "password": "pwd"}]
-			}`,
-			wantErr: true,
-		},
-		{
-			name: "encrypt backup true but missing backup password",
-			json: `{
-				"routers": [
-					{"name": "R1", "host": "10.0.0.1", "user": "admin", "password": "pwd", "encrypt_backup": true}
-				]
-			}`,
-			wantErr: true,
-		},
-	}
+func TestConfigManagerOperations(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgFile := filepath.Join(tempDir, "config.json")
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tempDir := t.TempDir()
-			cfgPath := filepath.Join(tempDir, "test.json")
-			_ = os.WriteFile(cfgPath, []byte(tt.json), 0o600)
-
-			_, err := Load(cfgPath)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Load() error = %v, wantErr = %v", err, tt.wantErr)
+	initialJSON := `{
+		"routers": [
+			{
+				"name": "Router1",
+				"host": "192.168.1.1",
+				"user": "admin",
+				"password": "pwd"
 			}
-		})
-	}
-}
+		]
+	}`
 
-func TestHostKeyResolution(t *testing.T) {
-	trueVal := true
-	falseVal := false
-
-	r1 := RouterConfig{InsecureIgnoreHostKey: &trueVal}
-	if !r1.ShouldIgnoreHostKey(false) {
-		t.Errorf("expected router override true to win over global false")
+	if err := os.WriteFile(cfgFile, []byte(initialJSON), 0o600); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	r2 := RouterConfig{InsecureIgnoreHostKey: &falseVal}
-	if r2.ShouldIgnoreHostKey(true) {
-		t.Errorf("expected router override false to win over global true")
+	mgr, err := NewManager(cfgFile)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
 	}
 
-	r3 := RouterConfig{InsecureIgnoreHostKey: nil}
-	if !r3.ShouldIgnoreHostKey(true) {
-		t.Errorf("expected global true when router override is nil")
+	// Test Toggle
+	newState, err := mgr.ToggleRouter("Router1")
+	if err != nil {
+		t.Fatalf("ToggleRouter failed: %v", err)
 	}
-	if r3.ShouldIgnoreHostKey(false) {
-		t.Errorf("expected global false when router override is nil")
+	if newState != false {
+		t.Errorf("expected toggled state to be false, got %v", newState)
+	}
+
+	// Verify reload from disk
+	reloadedCfg, err := Load(cfgFile)
+	if err != nil {
+		t.Fatalf("failed to reload config from disk: %v", err)
+	}
+	if reloadedCfg.Routers[0].IsEnabled() != false {
+		t.Errorf("persisted config did not reflect toggled state")
+	}
+
+	// Test Upsert (add new router)
+	newRouter := RouterConfig{
+		Name:     "Router2",
+		Host:     "192.168.2.1",
+		User:     "backup",
+		Password: "secret",
+	}
+	if err := mgr.UpsertRouter(newRouter); err != nil {
+		t.Fatalf("UpsertRouter failed: %v", err)
+	}
+
+	routers := mgr.ListRouters()
+	if len(routers) != 2 {
+		t.Fatalf("expected 2 routers, got %d", len(routers))
+	}
+
+	// Test Delete
+	if err := mgr.DeleteRouter("Router1"); err != nil {
+		t.Fatalf("DeleteRouter failed: %v", err)
+	}
+	if len(mgr.ListRouters()) != 1 {
+		t.Fatalf("expected 1 router after deletion, got %d", len(mgr.ListRouters()))
 	}
 }

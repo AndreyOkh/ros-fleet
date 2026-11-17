@@ -1,0 +1,39 @@
+<div class="kpi-grid" id="summary-cards">
+  <div class="kpi-card">
+    <div class="kpi-header">
+      <span class="kpi-title">Всего устройств</span>
+      <span class="kpi-icon">🌐</span>
+    </div>
+    <div class="kpi-value">{{.TotalCount}}</div>
+    <div class="kpi-subtitle">В конфигурации fleet</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-header">
+      <span class="kpi-title">Активных устройств</span>
+      <span class="kpi-icon">⚡</span>
+    </div>
+    <div class="kpi-value" style="color: var(--success-color);">{{.ActiveCount}}</div>
+    <div class="kpi-subtitle">Участвуют в резервном копировании</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-header">
+      <span class="kpi-title">Успешных бэкапов</span>
+      <span class="kpi-icon">✅</span>
+    </div>
+    <div class="kpi-value" style="color: {{if gt .FailedCount 0}}var(--warning-color){{else}}var(--success-color){{end}};">
+      {{.SuccessCount}}
+    </div>
+    <div class="kpi-subtitle">{{if gt .FailedCount 0}}<span style="color: var(--danger-color);">{{.FailedCount}} с ошибками</span>{{else}}Все бэкапы актуальны{{end}}</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-header">
+      <span class="kpi-title">Планировщик</span>
+      <span class="kpi-icon">⏱</span>
+    </div>
+    <div class="kpi-value" style="font-size: 20px;">{{.Interval}}</div>
+    <div class="kpi-subtitle">Интервал автозапуска</div>
+  </div>
+</div>

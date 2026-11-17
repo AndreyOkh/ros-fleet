@@ -1,4 +1,4 @@
-module github.com/username/real-mikrotik-backup
+module github.com/AndreyOkh/ros-fleet
 
 go 1.26.0
 

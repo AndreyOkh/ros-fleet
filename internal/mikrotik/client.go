@@ -17,13 +17,25 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
-	"github.com/username/real-mikrotik-backup/internal/config"
+	"github.com/AndreyOkh/ros-fleet/internal/config"
 )
 
 var (
 	// fileNameExtractRegex finds name="..." in MikroTik `/file print` output.
 	fileNameExtractRegex = regexp.MustCompile(`name="([^"]+)"`)
 )
+
+// DeviceInfo contains hardware and software telemetry retrieved from the router.
+type DeviceInfo struct {
+	Model       string `json:"model"`
+	Version     string `json:"version"`
+	Uptime      string `json:"uptime,omitempty"`
+	BoardName   string `json:"board_name,omitempty"`
+	CPU         string `json:"cpu,omitempty"`
+	CPULoad     string `json:"cpu_load,omitempty"`
+	FreeMemory  string `json:"free_memory,omitempty"`
+	TotalMemory string `json:"total_memory,omitempty"`
+}
 
 // Client handles SSH and SFTP interactions with a MikroTik RouterOS device.
 type Client struct {
@@ -220,9 +232,72 @@ func (c *Client) RunCommand(ctx context.Context, cmd string) (string, error) {
 	}
 }
 
+// FetchDeviceInfo queries system resource and routerboard information from the device.
+func (c *Client) FetchDeviceInfo(ctx context.Context) (*DeviceInfo, error) {
+	resourceOut, err := c.RunCommand(ctx, "/system resource print")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query /system resource print: %w", err)
+	}
+
+	resourceMap := parseRouterOSKeyValues(resourceOut)
+
+	// Query /system routerboard print (may fail on CHR / x86, which is normal)
+	routerboardOut, _ := c.RunCommand(ctx, "/system routerboard print")
+	rbMap := parseRouterOSKeyValues(routerboardOut)
+
+	info := &DeviceInfo{
+		Version:     resourceMap["version"],
+		BoardName:   resourceMap["board-name"],
+		Uptime:      resourceMap["uptime"],
+		CPU:         resourceMap["cpu"],
+		CPULoad:     resourceMap["cpu-load"],
+		FreeMemory:  resourceMap["free-memory"],
+		TotalMemory: resourceMap["total-memory"],
+	}
+
+	// Model selection: check routerboard model first, then board-name, then platform
+	if rbModel := rbMap["model"]; rbModel != "" {
+		info.Model = rbModel
+	} else if info.BoardName != "" {
+		info.Model = info.BoardName
+	} else if platform := resourceMap["platform"]; platform != "" {
+		info.Model = platform
+	} else {
+		info.Model = "RouterOS Device"
+	}
+
+	if info.Version == "" {
+		info.Version = rbMap["current-firmware"]
+	}
+	if info.Version == "" {
+		info.Version = "Unknown"
+	}
+
+	c.logger.Debug("Fetched device info",
+		slog.String("model", info.Model),
+		slog.String("version", info.Version),
+		slog.String("uptime", info.Uptime),
+	)
+
+	return info, nil
+}
+
+// parseRouterOSKeyValues parses output lines with "key: value" into a lowercase map.
+func parseRouterOSKeyValues(output string) map[string]string {
+	result := make(map[string]string)
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if idx := strings.Index(line, ":"); idx > 0 {
+			key := strings.ToLower(strings.TrimSpace(line[:idx]))
+			val := strings.TrimSpace(line[idx+1:])
+			result[key] = val
+		}
+	}
+	return result
+}
+
 // CreateExport generates a configuration export (.rsc) on the router.
-// On RouterOS v7, passwords and keys are hidden by default, so if exportSensitive is true,
-// it first attempts `/export show-sensitive file="..."` with automatic fallback to `/export file="..."`.
 func (c *Client) CreateExport(ctx context.Context, baseFilename string, exportSensitive bool) error {
 	if exportSensitive {
 		cmdWithSensitive := fmt.Sprintf(`/export show-sensitive file="%s"`, baseFilename)
@@ -249,7 +324,6 @@ func (c *Client) CreateExport(ctx context.Context, baseFilename string, exportSe
 }
 
 // CreateBackup generates a binary backup (.backup) on the router.
-// For RouterOS v7 compatibility, unencrypted backups require `dont-encrypt=yes`.
 func (c *Client) CreateBackup(ctx context.Context, baseFilename string, encrypt bool, password string) error {
 	if encrypt && password != "" {
 		escapedPass := strings.ReplaceAll(password, `"`, `\"`)
@@ -262,7 +336,6 @@ func (c *Client) CreateBackup(ctx context.Context, baseFilename string, encrypt 
 		return nil
 	}
 
-	// For unencrypted backup: RouterOS v7 requires dont-encrypt=yes
 	v7Cmd := fmt.Sprintf(`/system backup save name="%s" dont-encrypt=yes`, baseFilename)
 	out, err := c.RunCommand(ctx, v7Cmd)
 	if err == nil {
@@ -270,7 +343,6 @@ func (c *Client) CreateBackup(ctx context.Context, baseFilename string, encrypt 
 		return nil
 	}
 
-	// Fallback for older RouterOS v6 versions that do not support dont-encrypt flag
 	c.logger.Debug("dont-encrypt flag failed, falling back to legacy /system backup save",
 		slog.String("output", out),
 		slog.Any("error", err),
@@ -287,7 +359,6 @@ func (c *Client) CreateBackup(ctx context.Context, baseFilename string, encrypt 
 }
 
 // WaitForFile polls until the requested file appears on the router and has finished writing.
-// It searches root, flash/, and checks /file print if needed.
 func (c *Client) WaitForFile(ctx context.Context, baseFilename, extension string, maxWait time.Duration) (string, int64, error) {
 	deadline := time.Now().Add(maxWait)
 	candidatePaths := []string{
@@ -296,12 +367,6 @@ func (c *Client) WaitForFile(ctx context.Context, baseFilename, extension string
 		fmt.Sprintf("/%s.%s", baseFilename, extension),
 		fmt.Sprintf("/flash/%s.%s", baseFilename, extension),
 	}
-
-	c.logger.Debug("Waiting for file to appear and stabilize on router",
-		slog.String("baseFilename", baseFilename),
-		slog.String("ext", extension),
-		slog.Duration("maxWait", maxWait),
-	)
 
 	var lastSize int64 = -1
 	var foundPath string
@@ -318,7 +383,6 @@ func (c *Client) WaitForFile(ctx context.Context, baseFilename, extension string
 				return "", 0, fmt.Errorf("timed out waiting for file %s.%s after %v", baseFilename, extension, maxWait)
 			}
 
-			// If path is not yet confirmed, test candidate paths
 			if foundPath == "" {
 				for _, candidate := range candidatePaths {
 					info, err := c.sftpClient.Stat(candidate)
@@ -329,7 +393,6 @@ func (c *Client) WaitForFile(ctx context.Context, baseFilename, extension string
 					}
 				}
 
-				// If still not found, check via CLI `/file print detail` to locate the exact path
 				if foundPath == "" {
 					searchCmd := fmt.Sprintf(`/file print detail where name~"%s"`, baseFilename)
 					out, err := c.RunCommand(ctx, searchCmd)
@@ -345,17 +408,11 @@ func (c *Client) WaitForFile(ctx context.Context, baseFilename, extension string
 				}
 			}
 
-			// If file path is located, check size stability
 			if foundPath != "" {
 				info, err := c.sftpClient.Stat(foundPath)
 				if err == nil && info != nil && info.Size() > 0 {
 					currentSize := info.Size()
 					if currentSize == lastSize {
-						// Size remained stable for 1 second, file is completely written!
-						c.logger.Debug("File is ready for download",
-							slog.String("path", foundPath),
-							slog.Int64("size", currentSize),
-						)
 						return foundPath, currentSize, nil
 					}
 					lastSize = currentSize
@@ -403,14 +460,10 @@ func (c *Client) DownloadFile(ctx context.Context, remotePath string, writer io.
 }
 
 // RemoveFile deletes the temporary file from the MikroTik router.
-// It executes `/file remove [find name="..."]` via CLI and calls SFTP Remove.
 func (c *Client) RemoveFile(ctx context.Context, remotePath string) error {
 	c.logger.Debug("Removing temporary file from router", slog.String("remotePath", remotePath))
 
-	// Clean path for RouterOS find command
 	cleanName := strings.TrimPrefix(remotePath, "/")
-
-	// Attempt removal via RouterOS command
 	removeCmd := fmt.Sprintf(`/file remove [find name="%s"]`, cleanName)
 	if _, err := c.RunCommand(ctx, removeCmd); err != nil {
 		c.logger.Warn("RouterOS CLI file removal returned warning",
@@ -419,7 +472,6 @@ func (c *Client) RemoveFile(ctx context.Context, remotePath string) error {
 		)
 	}
 
-	// Also attempt SFTP file removal
 	_ = c.sftpClient.Remove(remotePath)
 	if cleanName != remotePath {
 		_ = c.sftpClient.Remove(cleanName)

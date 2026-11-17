@@ -21,28 +21,30 @@ ARG BUILD_DATE=unknown
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
-    -o /bin/mikrotik-backup \
-    ./cmd/backup
+    -o /bin/ros-fleet \
+    ./cmd/ros-fleet
 
 # Stage 2: Minimal runtime image
 FROM alpine:3.21
 
 # Install CA certificates and tzdata for proper TLS and time handling
 RUN apk add --no-cache ca-certificates tzdata && \
-    addgroup -g 1000 backup && \
-    adduser -u 1000 -G backup -s /bin/sh -D backup
+    addgroup -g 1000 rosfleet && \
+    adduser -u 1000 -G rosfleet -s /bin/sh -D rosfleet
 
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /bin/mikrotik-backup /usr/local/bin/mikrotik-backup
+COPY --from=builder /bin/ros-fleet /usr/local/bin/ros-fleet
 
 # Prepare directories
-RUN mkdir -p /app/backups && chown -R backup:backup /app
+RUN mkdir -p /app/backups && chown -R rosfleet:rosfleet /app
 
-USER backup
+USER rosfleet
+
+EXPOSE 8080
 
 VOLUME ["/app/backups"]
 
-ENTRYPOINT ["/usr/local/bin/mikrotik-backup"]
+ENTRYPOINT ["/usr/local/bin/ros-fleet"]
 CMD ["-config", "/app/config.json"]

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,8 +19,17 @@ type Config struct {
 	TimeoutSec            int            `json:"timeout_sec"`
 	ScheduleInterval      string         `json:"schedule_interval"`
 	InsecureIgnoreHostKey bool           `json:"insecure_ignore_host_key"`
+	Web                   WebConfig      `json:"web"`
 	Telegram              TelegramConfig `json:"telegram"`
 	Routers               []RouterConfig `json:"routers"`
+}
+
+// WebConfig holds settings for the built-in HTTP dashboard.
+type WebConfig struct {
+	Enabled      bool   `json:"enabled"`
+	ListenAddr   string `json:"listen_addr"`
+	AuthUser     string `json:"auth_user,omitempty"`
+	AuthPassword string `json:"auth_password,omitempty"`
 }
 
 // TelegramConfig holds settings for Telegram notifications.
@@ -33,6 +43,7 @@ type TelegramConfig struct {
 
 // RouterConfig contains connection and backup settings for a single MikroTik device.
 type RouterConfig struct {
+	Enabled               *bool  `json:"enabled,omitempty"`
 	Name                  string `json:"name"`
 	Host                  string `json:"host"`
 	Port                  int    `json:"port"`
@@ -46,8 +57,21 @@ type RouterConfig struct {
 	BackupPassword        string `json:"backup_password,omitempty"`
 }
 
+// IsEnabled returns whether backup is enabled for this router (defaults to true if omitted).
+func (r RouterConfig) IsEnabled() bool {
+	if r.Enabled == nil {
+		return true
+	}
+	return *r.Enabled
+}
+
+// SetEnabled updates the enabled state of the router.
+func (r *RouterConfig) SetEnabled(val bool) {
+	r.Enabled = &val
+}
+
 // ShouldIgnoreHostKey returns router-level host key setting if defined, or global fallback.
-func (r *RouterConfig) ShouldIgnoreHostKey(globalFallback bool) bool {
+func (r RouterConfig) ShouldIgnoreHostKey(globalFallback bool) bool {
 	if r.InsecureIgnoreHostKey != nil {
 		return *r.InsecureIgnoreHostKey
 	}
@@ -90,6 +114,9 @@ func (c *Config) applyDefaults() {
 	if strings.TrimSpace(c.ScheduleInterval) == "" {
 		c.ScheduleInterval = "24h"
 	}
+	if strings.TrimSpace(c.Web.ListenAddr) == "" {
+		c.Web.ListenAddr = ":8080"
+	}
 	if c.Telegram.TimeoutSec <= 0 {
 		c.Telegram.TimeoutSec = 15
 	}
@@ -97,6 +124,10 @@ func (c *Config) applyDefaults() {
 	for i := range c.Routers {
 		if c.Routers[i].Port <= 0 {
 			c.Routers[i].Port = 22
+		}
+		if c.Routers[i].Enabled == nil {
+			defaultEnabled := true
+			c.Routers[i].Enabled = &defaultEnabled
 		}
 	}
 }
@@ -165,4 +196,183 @@ func (c *Config) ParsedScheduleInterval() time.Duration {
 		return 24 * time.Hour
 	}
 	return d
+}
+
+// Manager coordinates thread-safe access and atomic persistence of the configuration.
+type Manager struct {
+	path string
+	mu   sync.RWMutex
+	cfg  *Config
+}
+
+// NewManager loads the configuration from path and initializes a thread-safe Manager.
+func NewManager(path string) (*Manager, error) {
+	cfg, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return &Manager{
+		path: filepath.Clean(path),
+		cfg:  cfg,
+	}, nil
+}
+
+// Get returns a shallow copy of the current configuration.
+func (m *Manager) Get() Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	c := *m.cfg
+	// Copy slice to prevent race conditions
+	c.Routers = make([]RouterConfig, len(m.cfg.Routers))
+	copy(c.Routers, m.cfg.Routers)
+	return c
+}
+
+// ListRouters returns a copy of the router slice.
+func (m *Manager) ListRouters() []RouterConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	res := make([]RouterConfig, len(m.cfg.Routers))
+	copy(res, m.cfg.Routers)
+	return res
+}
+
+// GetRouter retrieves a router configuration by name.
+func (m *Manager) GetRouter(name string) (RouterConfig, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, r := range m.cfg.Routers {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return RouterConfig{}, false
+}
+
+// ToggleRouter flips the enabled status of a router and atomically persists the config.
+func (m *Manager) ToggleRouter(name string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range m.cfg.Routers {
+		if m.cfg.Routers[i].Name == name {
+			newState := !m.cfg.Routers[i].IsEnabled()
+			m.cfg.Routers[i].SetEnabled(newState)
+			if err := m.saveLocked(); err != nil {
+				return false, err
+			}
+			return newState, nil
+		}
+	}
+	return false, fmt.Errorf("router %q not found", name)
+}
+
+// SetRouterEnabled sets the enabled status of a router and atomically persists the config.
+func (m *Manager) SetRouterEnabled(name string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range m.cfg.Routers {
+		if m.cfg.Routers[i].Name == name {
+			m.cfg.Routers[i].SetEnabled(enabled)
+			return m.saveLocked()
+		}
+	}
+	return fmt.Errorf("router %q not found", name)
+}
+
+// UpsertRouter adds or updates a router and atomically saves the config.
+func (m *Manager) UpsertRouter(router RouterConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if strings.TrimSpace(router.Name) == "" {
+		return errors.New("router name is required")
+	}
+	if strings.TrimSpace(router.Host) == "" {
+		return errors.New("router host is required")
+	}
+	if strings.TrimSpace(router.User) == "" {
+		return errors.New("router user is required")
+	}
+	if router.Port <= 0 {
+		router.Port = 22
+	}
+	if router.Enabled == nil {
+		enabled := true
+		router.Enabled = &enabled
+	}
+	if strings.TrimSpace(router.Password) == "" && strings.TrimSpace(router.PrivateKeyPath) == "" {
+		return errors.New("either password or private_key_path must be provided")
+	}
+	if router.EncryptBackup && strings.TrimSpace(router.BackupPassword) == "" {
+		return errors.New("backup_password is required when encrypt_backup is true")
+	}
+
+	found := false
+	for i := range m.cfg.Routers {
+		if m.cfg.Routers[i].Name == router.Name {
+			m.cfg.Routers[i] = router
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		m.cfg.Routers = append(m.cfg.Routers, router)
+	}
+
+	return m.saveLocked()
+}
+
+// DeleteRouter removes a router by name and atomically saves the config.
+func (m *Manager) DeleteRouter(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	idx := -1
+	for i, r := range m.cfg.Routers {
+		if r.Name == name {
+			idx = i
+			break
+		}
+	}
+
+	if idx == -1 {
+		return fmt.Errorf("router %q not found", name)
+	}
+
+	m.cfg.Routers = append(m.cfg.Routers[:idx], m.cfg.Routers[idx+1:]...)
+	return m.saveLocked()
+}
+
+// Save atomically writes the current configuration back to disk.
+func (m *Manager) Save() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saveLocked()
+}
+
+// saveLocked writes the config to a temp file and renames it to target.
+func (m *Manager) saveLocked() error {
+	data, err := json.MarshalIndent(m.cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to encode config to JSON: %w", err)
+	}
+	data = append(data, '\n')
+
+	tmpFile := m.path + ".tmp"
+	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
+		return fmt.Errorf("failed to write temp config file: %w", err)
+	}
+
+	if err := os.Rename(tmpFile, m.path); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to atomically replace config file: %w", err)
+	}
+
+	return nil
 }

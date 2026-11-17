@@ -1,0 +1,94 @@
+<div class="modal-overlay" id="router-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 class="modal-title">
+        {{if .IsEdit}}Редактировать устройство {{.Router.Name}}{{else}}Добавить устройство в парк{{end}}
+      </h3>
+      <button class="close-btn" onclick="document.getElementById('modal-container').innerHTML = ''">&times;</button>
+    </div>
+
+    <form hx-post="/routers"
+          hx-target="#routers-table-container"
+          hx-swap="innerHTML"
+          onsubmit="setTimeout(() => { document.getElementById('modal-container').innerHTML = ''; }, 300)">
+      
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="name">Имя устройства *</label>
+          <input type="text" id="name" name="name" value="{{.Router.Name}}" required
+                 {{if .IsEdit}}readonly style="opacity: 0.7; cursor: not-allowed;"{{end}}
+                 placeholder="Router-Core-1">
+        </div>
+
+        <div class="form-group">
+          <label for="host">Хост (IP или DNS) *</label>
+          <input type="text" id="host" name="host" value="{{.Router.Host}}" required placeholder="192.168.88.1">
+        </div>
+
+        <div class="form-group">
+          <label for="port">SSH Порт *</label>
+          <input type="number" id="port" name="port" value="{{if gt .Router.Port 0}}{{.Router.Port}}{{else}}22{{end}}" required>
+        </div>
+
+        <div class="form-group">
+          <label for="user">SSH Пользователь *</label>
+          <input type="text" id="user" name="user" value="{{.Router.User}}" required placeholder="backup_user">
+        </div>
+
+        <div class="form-group full-width">
+          <label for="password">Пароль (опционально, если используется SSH-ключ)</label>
+          <input type="password" id="password" name="password" value="{{.Router.Password}}" placeholder="••••••••">
+        </div>
+
+        <div class="form-group">
+          <label for="private_key_path">Путь к SSH-ключу</label>
+          <input type="text" id="private_key_path" name="private_key_path" value="{{.Router.PrivateKeyPath}}" placeholder="/root/.ssh/id_ed25519">
+        </div>
+
+        <div class="form-group">
+          <label for="private_key_passphrase">Пароль от SSH-ключа</label>
+          <input type="password" id="private_key_passphrase" name="private_key_passphrase" value="{{.Router.PrivateKeyPassphrase}}" placeholder="Опционально">
+        </div>
+
+        <div class="form-group full-width">
+          <label class="checkbox-group">
+            <input type="checkbox" name="insecure_ignore_host_key" value="true"
+                   {{if or (not .IsEdit) (and .Router.InsecureIgnoreHostKey (eq (derefBool .Router.InsecureIgnoreHostKey) true))}}checked{{end}}>
+            <span>Отключить строгую проверку HostKey (для локальных устройств)</span>
+          </label>
+        </div>
+
+        <div class="form-group full-width">
+          <label class="checkbox-group">
+            <input type="checkbox" name="export_sensitive" value="true"
+                   {{if or (not .IsEdit) .Router.ExportSensitive}}checked{{end}}>
+            <span>Включать чувствительные данные в .rsc (флаг show-sensitive для RouterOS v7)</span>
+          </label>
+        </div>
+
+        <div class="form-group full-width">
+          <label class="checkbox-group">
+            <input type="checkbox" id="encrypt_backup" name="encrypt_backup" value="true"
+                   {{if .Router.EncryptBackup}}checked{{end}}
+                   onchange="document.getElementById('backup_pwd_group').style.display = this.checked ? 'block' : 'none'">
+            <span>Шифровать бинарный бэкап (.backup) паролем</span>
+          </label>
+        </div>
+
+        <div class="form-group full-width" id="backup_pwd_group" style="display: {{if .Router.EncryptBackup}}block{{else}}none{{end}};">
+          <label for="backup_password">Пароль шифрования бэкапа</label>
+          <input type="password" id="backup_password" name="backup_password" value="{{.Router.BackupPassword}}" placeholder="Стойкий пароль шифрования">
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML = ''">
+          Отмена
+        </button>
+        <button type="submit" class="btn btn-primary">
+          {{if .IsEdit}}Сохранить изменения{{else}}Добавить устройство{{end}}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
