@@ -1,8 +1,8 @@
 module github.com/AndreyOkh/ros-fleet
 
-go 1.26.0
+go 1.27
 
-toolchain go1.26.11
+toolchain go1.27.0
 
 require (
 	github.com/pkg/sftp v1.13.12

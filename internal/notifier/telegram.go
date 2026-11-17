@@ -3,7 +3,7 @@ package notifier
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"html"
 	"io"

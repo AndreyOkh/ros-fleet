@@ -1,7 +1,8 @@
 package config
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -358,7 +359,7 @@ func (m *Manager) Save() error {
 
 // saveLocked writes the config to a temp file and renames it to target.
 func (m *Manager) saveLocked() error {
-	data, err := json.MarshalIndent(m.cfg, "", "  ")
+	data, err := json.Marshal(m.cfg, jsontext.WithIndent("  "))
 	if err != nil {
 		return fmt.Errorf("failed to encode config to JSON: %w", err)
 	}
