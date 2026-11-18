@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -48,6 +49,26 @@ func (r *Runner) GitStatus() gitrepo.GitStatus {
 		return gitrepo.GitStatus{}
 	}
 	return r.gitRepo.GetStatus()
+}
+
+// GitPush manually triggers a Git push to the remote repository.
+func (r *Runner) GitPush(ctx context.Context) error {
+	r.mu.Lock()
+	repo := r.gitRepo
+	r.mu.Unlock()
+
+	if repo == nil {
+		cfg := r.cfgMgr.Get()
+		if !cfg.Git.Enabled {
+			return errors.New("git repository versioning is disabled")
+		}
+		repo = gitrepo.New(cfg.ExportDir, cfg.Git, r.logger)
+		r.mu.Lock()
+		r.gitRepo = repo
+		r.mu.Unlock()
+	}
+
+	return repo.Push(ctx)
 }
 
 // Run executes the backup process for all enabled routers.

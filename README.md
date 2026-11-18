@@ -79,9 +79,34 @@ backups/
 
 ---
 
-## Настройка Git-интеграции и SSH-ключей
+## Настройка Git-интеграции (Access Token или SSH-ключи)
 
-Для автоматической отправки изменений конфигураций в удаленный репозиторий (`auto_push: true`) настройте доступ по SSH:
+Для автоматической отправки изменений конфигураций в удаленный репозиторий (`auto_push: true`) поддерживается два варианта авторизации:
+
+### Вариант 1: Access Token через HTTPS (Рекомендуется)
+Самый простой и безопасный способ без необходимости генерации и монтирования SSH-ключей. Поддерживает **Personal Access Token**, **Deploy Token**, **Project Access Token** (GitHub, GitLab, Gitea, Forgejo, Bitbucket).
+
+1. В `config.json` укажите HTTPS-адрес репозитория и ваш токен:
+```json
+  "git": {
+    "enabled": true,
+    "remote_url": "https://github.com/your-org/mikrotik-configs.git",
+    "branch": "main",
+    "auto_push": true,
+    "access_token": "ghp_yourPersonalAccessTokenHere"
+  }
+```
+2. Или передайте токен через переменную окружения `GIT_ACCESS_TOKEN` (или `ROS_FLEET_GIT_TOKEN`) в Docker Compose:
+```yaml
+environment:
+  - GIT_ACCESS_TOKEN=${GIT_ACCESS_TOKEN}
+```
+> [!NOTE]
+> `ros-fleet` автоматически формирует корректные учетные данные для выбранного Git-сервера (GitHub `x-access-token`, GitLab `oauth2`, Bitbucket `x-token-auth`, Gitea) и гарантированно маскирует токен в логах и веб-интерфейсе (`[REDACTED]`).
+
+---
+
+### Вариант 2: Доступ по SSH-ключам
 
 ### 1. Генерация отдельного SSH-ключа (на хосте)
 ```bash
@@ -213,11 +238,12 @@ services:
 | `schedule.timezone` | string | `Local` | Часовой пояс планировщика (напр. `"Europe/Moscow"`, `"UTC"`) |
 | `defaults.*` | object | — | Глобальные настройки авторизации и бэкапа по умолчанию |
 | `git.enabled` | bool | `false` | Включить Git-версионирование экспортов в `export_dir` |
-| `git.remote_url` | string | `""` | URL удаленного репозитория (`git@...` или `https://...`) |
+| `git.remote_url` | string | `""` | URL удаленного репозитория (`https://...` или `git@...`) |
 | `git.branch` | string | `"main"` | Имя ветки в Git |
 | `git.author_name` | string | `"ros-fleet"` | Имя автора для Git коммитов |
 | `git.author_email` | string | `"ros-fleet@local"` | Email автора для Git коммитов |
 | `git.auto_push` | bool | `false` | Выполнять `git push` при наличии новых коммитов |
+| `git.access_token` | string | `""` | Personal / Deploy Access Token (также через `GIT_ACCESS_TOKEN` env) |
 | `web.enabled` | bool | `true` | Включить встроенный HTTP веб-интерфейс |
 | `web.listen_addr` | string | `":8080"` | Сетевой адрес и порт веб-сервера |
 | `web.auth_user` | string | `""` | Логин для Basic Auth (если пусто — вход без пароля) |

@@ -137,6 +137,18 @@ func TestServerDashboardAndStatic(t *testing.T) {
 	if !strings.Contains(rrGit.Body.String(), "git-status-badge") {
 		t.Errorf("expected git status HTML to contain 'git-status-badge'")
 	}
+
+	// 5. Test Git Push POST /dashboard/git-push
+	reqPush := httptest.NewRequest(http.MethodPost, "/dashboard/git-push", nil)
+	rrPush := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrPush, reqPush)
+
+	if rrPush.Code != http.StatusOK {
+		t.Errorf("POST /dashboard/git-push returned status %d, want %d", rrPush.Code, http.StatusOK)
+	}
+	if !strings.Contains(rrPush.Body.String(), "git-status-badge") {
+		t.Errorf("expected git push response to return 'git-status-badge' HTML")
+	}
 }
 
 func TestServerToggleAndEndpoints(t *testing.T) {

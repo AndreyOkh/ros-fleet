@@ -13,12 +13,34 @@
     {{end}}
     {{if .AutoPush}}
       {{if .LastError}}
-        <span class="git-push-pill git-push-err" title="{{.LastError}}">⚠️ push error</span>
+        <span class="git-push-pill git-push-err"
+              title="{{.LastError}} (нажмите, чтобы повторить push)"
+              hx-post="/dashboard/git-push"
+              hx-target="#git-status-container"
+              hx-swap="innerHTML"
+              style="cursor: pointer;">⚠️ push error</span>
       {{else if not .LastPushAt.IsZero}}
-        <span class="git-push-pill git-push-ok" title="Push: {{.LastPushFormatted}}">⬆️ push ok</span>
+        <span class="git-push-pill git-push-ok"
+              title="Push: {{.LastPushFormatted}} (нажмите, чтобы отправить сейчас)"
+              hx-post="/dashboard/git-push"
+              hx-target="#git-status-container"
+              hx-swap="innerHTML"
+              style="cursor: pointer;">⬆️ push ok</span>
       {{else}}
-        <span class="git-push-pill git-push-idle">⬆️ auto push</span>
+        <span class="git-push-pill git-push-idle"
+              title="Нажмите, чтобы выполнить git push сейчас"
+              hx-post="/dashboard/git-push"
+              hx-target="#git-status-container"
+              hx-swap="innerHTML"
+              style="cursor: pointer;">⬆️ auto push</span>
       {{end}}
+    {{else if .RemoteURL}}
+      <span class="git-push-pill git-push-idle"
+            title="Удаленный репозиторий настроен. Нажмите, чтобы выполнить git push"
+            hx-post="/dashboard/git-push"
+            hx-target="#git-status-container"
+            hx-swap="innerHTML"
+            style="cursor: pointer;">⬆️ push</span>
     {{else}}
       <span class="git-push-pill git-push-local" title="Локальный Git репозиторий">💾 local</span>
     {{end}}

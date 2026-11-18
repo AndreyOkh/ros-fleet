@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AndreyOkh/ros-fleet/internal/config"
 	"github.com/AndreyOkh/ros-fleet/internal/gitrepo"
@@ -130,6 +131,7 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /dashboard/summary", s.handleSummaryCards)
 	mux.HandleFunc("GET /dashboard/git-status", s.handleGitStatus)
+	mux.HandleFunc("POST /dashboard/git-push", s.handleGitPush)
 	mux.HandleFunc("GET /routers/table", s.handleTable)
 
 	// Global settings routes
@@ -206,6 +208,22 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {
+	status := s.runner.GitStatus()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "git_status.html", status); err != nil {
+		s.logger.Error("Template render error (git_status.html)", slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleGitPush(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := s.runner.GitPush(ctx); err != nil {
+		s.logger.Error("Manual git push failed", slog.Any("error", err))
+	}
+
 	status := s.runner.GitStatus()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "git_status.html", status); err != nil {

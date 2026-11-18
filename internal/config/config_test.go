@@ -170,3 +170,59 @@ func TestActualConfigFile(t *testing.T) {
 	t.Logf("Successfully loaded and validated config.json with %d routers", len(cfg.Routers))
 }
 
+func TestGitConfigAccessTokenAndEnvFallback(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgFile := filepath.Join(tempDir, "config.json")
+
+	rawJSON := `{
+		"git": {
+			"enabled": true,
+			"remote_url": "https://github.com/myorg/configs.git",
+			"access_token": "ghp_TestExplicitToken123"
+		},
+		"routers": [
+			{"name": "R1", "host": "192.168.1.1", "user": "admin", "password": "pwd"}
+		]
+	}`
+
+	if err := os.WriteFile(cfgFile, []byte(rawJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.Git.AccessToken != "ghp_TestExplicitToken123" {
+		t.Errorf("expected AccessToken 'ghp_TestExplicitToken123', got %q", cfg.Git.AccessToken)
+	}
+
+	// Test environment variable fallback
+	cfgFileEnv := filepath.Join(tempDir, "config_env.json")
+	rawJSONNoToken := `{
+		"git": {
+			"enabled": true
+		},
+		"routers": [
+			{"name": "R1", "host": "192.168.1.1", "user": "admin", "password": "pwd"}
+		]
+	}`
+	if err := os.WriteFile(cfgFileEnv, []byte(rawJSONNoToken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GIT_ACCESS_TOKEN", "ghp_EnvVarToken456")
+	t.Setenv("GIT_REMOTE_URL", "https://gitlab.com/myorg/configs.git")
+
+	cfgEnv, err := Load(cfgFileEnv)
+	if err != nil {
+		t.Fatalf("Load with env failed: %v", err)
+	}
+	if cfgEnv.Git.AccessToken != "ghp_EnvVarToken456" {
+		t.Errorf("expected env fallback token 'ghp_EnvVarToken456', got %q", cfgEnv.Git.AccessToken)
+	}
+	if cfgEnv.Git.RemoteURL != "https://gitlab.com/myorg/configs.git" {
+		t.Errorf("expected env fallback remote_url 'https://gitlab.com/myorg/configs.git', got %q", cfgEnv.Git.RemoteURL)
+	}
+}
+

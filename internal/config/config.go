@@ -57,6 +57,7 @@ type GitConfig struct {
 	AuthorName  string `json:"author_name"`
 	AuthorEmail string `json:"author_email"`
 	AutoPush    bool   `json:"auto_push"`
+	AccessToken string `json:"access_token,omitempty"`
 }
 
 // WebConfig holds settings for the built-in HTTP dashboard.
@@ -293,6 +294,18 @@ func (c *Config) applyDefaults() {
 	}
 	if strings.TrimSpace(c.Git.AuthorEmail) == "" {
 		c.Git.AuthorEmail = "ros-fleet@local"
+	}
+	if strings.TrimSpace(c.Git.AccessToken) == "" {
+		if token := os.Getenv("GIT_ACCESS_TOKEN"); token != "" {
+			c.Git.AccessToken = token
+		} else if token := os.Getenv("ROS_FLEET_GIT_TOKEN"); token != "" {
+			c.Git.AccessToken = token
+		}
+	}
+	if strings.TrimSpace(c.Git.RemoteURL) == "" {
+		if remote := os.Getenv("GIT_REMOTE_URL"); remote != "" {
+			c.Git.RemoteURL = remote
+		}
 	}
 	if c.Telegram.TimeoutSec <= 0 {
 		c.Telegram.TimeoutSec = 15

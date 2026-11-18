@@ -25,11 +25,12 @@
   },
   "git": {
     "enabled": true,
-    "remote_url": "git@github.com:your-org/mikrotik-configs.git",
+    "remote_url": "https://github.com/your-org/mikrotik-configs.git",
     "branch": "main",
     "author_name": "ros-fleet",
     "author_email": "ros-fleet@local",
-    "auto_push": false
+    "auto_push": false,
+    "access_token": ""
   },
   "web": {
     "enabled": true,

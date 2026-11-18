@@ -2,6 +2,12 @@
 
 ## Current Status & Focus
 - **Последние изменения в проекте:**
+  - **Отправка изменений в Git через Access Token:**
+    - В `config.GitConfig` добавлено поле `access_token` (с поддержкой переменных окружения `GIT_ACCESS_TOKEN` и `ROS_FLEET_GIT_TOKEN`).
+    - В `internal/gitrepo` реализованы функции `BuildEffectiveRemoteURL`, `SanitizeRemoteURL` и метод `SanitizeOutput`.
+    - Поддержана автоматическая адаптация аутентификации под различные провайдеры (GitHub `x-access-token`, GitLab `oauth2`, Bitbucket `x-token-auth`, Gitea), а также автоматическая конвертация SSH-синтаксиса (`git@host:owner/repo.git`) в HTTPS при указании токена.
+    - Гарантировано маскирование токена (`[REDACTED]`) во всех логах, текстах ошибок и в интерфейсе дашборда.
+    - Добавлен метод ручного вызова `Push()` в `GitRepository` и `Runner`, а также маршрут `POST /dashboard/git-push` для мгновенной отправки изменений по клику на бейдж статуса в UI.
   - **Импорт устройств из внешней системы (`http://of-linux21/device/`):**
     - Выполнено подключение к внутренней системе инвентаризации на `http://of-linux21/device/` с переданным `PHPSESSID`.
     - Собрана и спарсена полная база оборудования: 131 устройство (7 страниц пагинации).
