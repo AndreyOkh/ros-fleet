@@ -238,6 +238,18 @@ func TestServerToggleAndEndpoints(t *testing.T) {
 	if rcEnc.BackupPassword != "custom_secret_123" {
 		t.Errorf("expected BackupPassword to be custom_secret_123, got %q", rcEnc.BackupPassword)
 	}
+
+	// Test POST /backup/all kicks off background run and returns table immediately
+	reqBackupAll := httptest.NewRequest(http.MethodPost, "/backup/all", nil)
+	rrBackupAll := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrBackupAll, reqBackupAll)
+
+	if rrBackupAll.Code != http.StatusOK {
+		t.Errorf("POST /backup/all returned status %d, want 200", rrBackupAll.Code)
+	}
+	if !strings.Contains(rrBackupAll.Body.String(), "card-table") {
+		t.Errorf("expected table HTML in response to POST /backup/all")
+	}
 }
 
 func TestServerBasicAuth(t *testing.T) {

@@ -1,3 +1,9 @@
+{{if .IsRunning}}
+<div class="backup-running-banner">
+  <span class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
+  <span>Выполняется общее резервное копирование устройств в фоновом режиме... Таблица обновляется автоматически.</span>
+</div>
+{{end}}
 <div class="card-table">
   <div class="table-responsive">
     <table class="devices-table">

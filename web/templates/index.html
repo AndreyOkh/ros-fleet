@@ -111,7 +111,7 @@
       </button>
     </div>
 
-    <div id="routers-table-container">
+    <div id="routers-table-container" hx-get="/routers/table" hx-trigger="every 15s" hx-swap="innerHTML">
       {{template "table_container.html" .Table}}
     </div>
   </div>

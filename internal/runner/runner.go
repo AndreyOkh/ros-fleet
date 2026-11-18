@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AndreyOkh/ros-fleet/internal/config"
@@ -19,13 +20,14 @@ import (
 
 // Runner coordinates the backup pipeline, git sync, and state updates.
 type Runner struct {
-	cfgMgr   *config.Manager
-	storage  *storage.Storage
-	notifier *notifier.TelegramNotifier
-	stateMgr *state.StateManager
-	gitRepo  *gitrepo.GitRepository
-	logger   *slog.Logger
-	mu       sync.Mutex
+	cfgMgr    *config.Manager
+	storage   *storage.Storage
+	notifier  *notifier.TelegramNotifier
+	stateMgr  *state.StateManager
+	gitRepo   *gitrepo.GitRepository
+	logger    *slog.Logger
+	mu        sync.Mutex
+	isRunning atomic.Bool
 }
 
 // New creates a new Runner instance.
@@ -39,6 +41,11 @@ func New(cfgMgr *config.Manager, stateMgr *state.StateManager, logger *slog.Logg
 		gitRepo:  gitrepo.New(cfg.ExportDir, cfg.Git, logger),
 		logger:   logger.With(slog.String("component", "runner")),
 	}
+}
+
+// IsRunning returns true if a bulk backup run is currently in progress.
+func (r *Runner) IsRunning() bool {
+	return r.isRunning.Load()
 }
 
 // GitStatus returns a snapshot of current Git repository status.
@@ -73,6 +80,12 @@ func (r *Runner) GitPush(ctx context.Context) error {
 
 // Run executes the backup process for all enabled routers.
 func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
+	if !r.isRunning.CompareAndSwap(false, true) {
+		r.logger.Warn("Backup run already in progress, skipping duplicate execution")
+		return notifier.SummaryReport{}, errors.New("backup run already in progress")
+	}
+	defer r.isRunning.Store(false)
+
 	cfg := r.cfgMgr.Get()
 
 	r.mu.Lock()

@@ -29,6 +29,8 @@ type Server struct {
 	scheduler  *scheduler.Scheduler
 	logger     *slog.Logger
 	templates  *template.Template
+	appCtx     context.Context
+	cancelApp  context.CancelFunc
 }
 
 // TableRowData combines configuration, effective resolved settings, and live state.
@@ -40,7 +42,8 @@ type TableRowData struct {
 
 // TableData contains all rows for the main device table.
 type TableData struct {
-	Items []TableRowData
+	Items     []TableRowData
+	IsRunning bool
 }
 
 // SummaryData contains KPI card stats for the dashboard header.
@@ -110,6 +113,7 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 		return nil, fmt.Errorf("failed to parse embedded templates: %w", err)
 	}
 
+	appCtx, cancelApp := context.WithCancel(context.Background())
 	s := &Server{
 		cfgMgr:    cfgMgr,
 		runner:    runner,
@@ -117,6 +121,8 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 		scheduler: sched,
 		logger:    log,
 		templates: tmpl,
+		appCtx:    appCtx,
+		cancelApp: cancelApp,
 	}
 
 	mux := http.NewServeMux()
@@ -186,6 +192,9 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down web server...")
+	if s.cancelApp != nil {
+		s.cancelApp()
+	}
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -392,7 +401,12 @@ func (s *Server) handleBackupSingle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	s.logger.Info("Manual backup triggered via Web UI", slog.String("router", name))
 
-	_, _ = s.runner.RunSingle(r.Context(), name)
+	cfg := s.cfgMgr.Get()
+	timeout := time.Duration(cfg.TimeoutSec+10) * time.Second
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), timeout)
+	defer cancel()
+
+	_, _ = s.runner.RunSingle(ctx, name)
 	s.renderSingleRow(w, name)
 }
 
@@ -417,7 +431,18 @@ func (s *Server) handleDeleteRouter(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBackupAll(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Backup all triggered via Web UI")
-	_, _ = s.runner.Run(r.Context())
+	if s.runner.IsRunning() {
+		s.logger.Warn("Backup all triggered while already running")
+		s.handleTable(w, r)
+		return
+	}
+
+	go func() {
+		if _, err := s.runner.Run(s.appCtx); err != nil {
+			s.logger.Error("Background fleet backup failed", slog.Any("error", err))
+		}
+	}()
+
 	s.handleTable(w, r)
 }
 
@@ -467,7 +492,16 @@ func (s *Server) buildTableData() TableData {
 			State:     st,
 		})
 	}
-	return TableData{Items: items}
+
+	isRunning := false
+	if s.runner != nil {
+		isRunning = s.runner.IsRunning()
+	}
+
+	return TableData{
+		Items:     items,
+		IsRunning: isRunning,
+	}
 }
 
 func (s *Server) buildSummaryData() SummaryData {
