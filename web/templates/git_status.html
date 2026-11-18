@@ -1,30 +1,52 @@
-<div class="git-status-badge {{if not .Enabled}}git-disabled{{else if .LastError}}git-error{{else}}git-ok{{end}}"
-     title="{{if not .Enabled}}Git-версионирование экспортов отключено{{else if .LastError}}{{.LastError}}{{else}}Ветка: {{.Branch}} | Последний коммит: {{.LastCommitMsg}}{{end}}">
-  <span class="git-icon">🌿</span>
+<div class="kpi-card git-status-card {{if not .Enabled}}git-disabled{{else if .LastError}}git-error{{else}}git-ok{{end}}"
+     id="kpi-git-card">
+  <div class="kpi-header">
+    <span class="kpi-title">Экспорт в Git</span>
+    <span class="kpi-icon">🌿</span>
+  </div>
+
   {{if not .Enabled}}
-    <span class="git-text">Git: выкл</span>
+    <div class="kpi-value" style="font-size: 16px; color: var(--text-muted);">Отключен</div>
+    <div class="kpi-subtitle">Версионирование .rsc выключено</div>
   {{else}}
-    <span class="git-branch">{{.Branch}}</span>
-    {{if .LastCommitHash}}
-      <span class="git-hash" title="{{.LastCommitMsg}}">#{{.LastCommitHash}}</span>
-      <span class="git-time">{{.LastCommitFormatted}}</span>
-    {{else}}
-      <span class="git-time">нет коммитов</span>
-    {{end}}
-    {{if or .AutoPush .RemoteURL}}
-      <button type="button"
-              class="git-push-btn {{if .LastError}}push-error{{else if not .LastPushAt.IsZero}}push-ok{{else}}push-idle{{end}}"
-              hx-post="/dashboard/git-push"
-              hx-target="#git-status-container"
-              hx-swap="innerHTML"
-              hx-indicator="#git-push-indicator"
-              title="{{if .LastError}}Ошибка отправки: {{.LastError}} (нажмите, чтобы повторить){{else if not .LastPushAt.IsZero}}Отправлено: {{.LastPushFormatted}} (нажмите для повторной отправки){{else}}Нажмите для отправки изменений в Git{{end}}">
-        <span class="git-push-spinner htmx-indicator" id="git-push-indicator"></span>
-        <span class="git-push-icon">{{if .LastError}}⚠️{{else}}⬆️{{end}}</span>
-        <span class="git-push-text">{{if .LastError}}Push error{{else if not .LastPushAt.IsZero}}Push ok{{else}}Push{{end}}</span>
-      </button>
-    {{else}}
-      <span class="git-pill-local" title="Локальный Git репозиторий (remote_url не задан)">💾 local</span>
-    {{end}}
+    <div class="kpi-value git-card-value">
+      <div class="git-card-branch" title="Ветка: {{.Branch}}{{if .LastCommitHash}} (#{{.LastCommitHash}}){{end}}">
+        <span class="git-branch-name">{{.Branch}}</span>
+        {{if .LastCommitHash}}
+          <span class="git-hash" title="{{.LastCommitMsg}}">#{{.LastCommitHash}}</span>
+        {{end}}
+      </div>
+
+      {{if .NeedsPush}}
+        <button type="button"
+                class="git-push-btn {{if .LastError}}push-error{{else}}push-idle{{end}}"
+                hx-post="/dashboard/git-push"
+                hx-target="#kpi-git-card"
+                hx-swap="outerHTML"
+                hx-indicator="#kpi-git-push-indicator"
+                title="{{if .LastError}}Ошибка отправки: {{.LastError}} (нажмите для повтора){{else}}Локальный репозиторий отличается от удаленного ({{.Ahead}} непуш.). Нажмите для отправки{{end}}">
+          <span class="git-push-spinner htmx-indicator" id="kpi-git-push-indicator"></span>
+          <span class="git-push-icon">{{if .LastError}}⚠️{{else}}⬆️{{end}}</span>
+          <span class="git-push-text">{{if .LastError}}Ошибка{{else}}Push{{if gt .Ahead 1}} ({{.Ahead}}){{end}}{{end}}</span>
+        </button>
+      {{end}}
+    </div>
+
+    <div class="kpi-subtitle">
+      {{if .LastError}}
+        <span style="color: var(--danger-color); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{.LastError}}">
+          Ошибка: {{.LastError}}
+        </span>
+      {{else if .LastCommitAt.IsZero}}
+        <span>нет коммитов</span>
+      {{else}}
+        <span title="{{.LastCommitMsg}}">Коммит: {{.LastCommitFormatted}}</span>
+        {{if and .HasRemote (not .LastPushAt.IsZero) (not .NeedsPush)}}
+          <span style="color: var(--success-color); margin-left: 4px;" title="Все коммиты отправлены в origin ({{.LastPushFormatted}})">• Отправлено</span>
+        {{else if not .HasRemote}}
+          <span class="text-muted" style="margin-left: 4px;">• local</span>
+        {{end}}
+      {{end}}
+    </div>
   {{end}}
 </div>

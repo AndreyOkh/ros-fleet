@@ -128,7 +128,7 @@ body {
 /* KPI Summary Cards */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 16px;
   margin-bottom: 28px;
 }
@@ -717,38 +717,35 @@ input[type="text"].filter-input {
   100% { transform: rotate(360deg); }
 }
 
-/* Git Status Widget */
-.git-status-badge {
-  display: inline-flex;
+/* Git Status KPI Card & Widget */
+.git-status-card.git-error {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+.git-status-card.git-disabled {
+  opacity: 0.65;
+}
+.git-card-value {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  height: 38px;
-  min-height: 38px;
-  max-height: 38px;
-  padding: 0 12px;
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  transition: all 0.2s ease;
+  min-height: 32px;
+}
+.git-card-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  box-sizing: border-box;
-  flex-shrink: 0;
 }
-.git-status-badge.git-ok {
-  border-color: rgba(16, 185, 129, 0.4);
-}
-.git-status-badge.git-error {
-  border-color: rgba(239, 68, 68, 0.5);
-  background: var(--danger-bg);
-  color: var(--danger-color);
-}
-.git-status-badge.git-disabled {
-  opacity: 0.6;
-}
-.git-branch {
+.git-branch-name {
+  font-size: 15px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-primary);
 }
 .git-hash {
@@ -758,6 +755,7 @@ input[type="text"].filter-input {
   padding: 2px 6px;
   border-radius: 4px;
   color: var(--text-primary);
+  flex-shrink: 0;
 }
 .git-time {
   font-size: 12px;

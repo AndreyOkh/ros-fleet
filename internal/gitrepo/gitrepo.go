@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -115,6 +116,9 @@ type GitStatus struct {
 	LastCommitHash string    `json:"last_commit_hash"`
 	LastPushAt     time.Time `json:"last_push_at"`
 	LastError      string    `json:"last_error"`
+	HasRemote      bool      `json:"has_remote"`
+	Ahead          int       `json:"ahead"`
+	NeedsPush      bool      `json:"needs_push"`
 }
 
 // LastCommitFormatted returns human-readable commit time.
@@ -138,13 +142,14 @@ type GitRepository struct {
 	exportDir string
 	cfg       config.GitConfig
 	logger    *slog.Logger
-	mu        sync.RWMutex
+	mu        sync.Mutex
 	status    GitStatus
 }
 
 // New creates a new GitRepository manager for the export directory.
 func New(exportDir string, cfg config.GitConfig, logger *slog.Logger) *GitRepository {
 	cleanDir := filepath.Clean(exportDir)
+	hasRemote := strings.TrimSpace(cfg.RemoteURL) != ""
 	g := &GitRepository{
 		exportDir: cleanDir,
 		cfg:       cfg,
@@ -154,11 +159,12 @@ func New(exportDir string, cfg config.GitConfig, logger *slog.Logger) *GitReposi
 			Branch:    cfg.Branch,
 			RemoteURL: SanitizeRemoteURL(cfg.RemoteURL),
 			AutoPush:  cfg.AutoPush,
+			HasRemote: hasRemote,
 		},
 	}
 
 	if cfg.Enabled {
-		g.refreshStatusFromDisk()
+		g.refreshStatusFromDiskLocked()
 	}
 
 	return g
@@ -180,12 +186,15 @@ func (g *GitRepository) SanitizeOutput(input string) string {
 
 // GetStatus returns a snapshot of current Git status.
 func (g *GitRepository) GetStatus() GitStatus {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.cfg.Enabled {
+		g.refreshStatusFromDiskLocked()
+	}
 	return g.status
 }
 
-func (g *GitRepository) refreshStatusFromDisk() {
+func (g *GitRepository) refreshStatusFromDiskLocked() {
 	gitDir := filepath.Join(g.exportDir, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
 		return
@@ -205,6 +214,29 @@ func (g *GitRepository) refreshStatusFromDisk() {
 			g.status.LastCommitMsg = parts[2]
 		}
 	}
+
+	g.status.HasRemote = strings.TrimSpace(g.cfg.RemoteURL) != ""
+	if g.status.HasRemote && g.status.LastCommitHash != "" {
+		branch := g.cfg.Branch
+		if branch == "" {
+			branch = "main"
+		}
+		remoteRef := "origin/" + branch
+		if _, verifyErr := g.runGit(ctx, g.exportDir, "rev-parse", "--verify", remoteRef); verifyErr == nil {
+			aheadOut, countErr := g.runGit(ctx, g.exportDir, "rev-list", "--count", remoteRef+"..HEAD")
+			if countErr == nil {
+				aheadCount, _ := strconv.Atoi(strings.TrimSpace(aheadOut))
+				g.status.Ahead = aheadCount
+			}
+		} else {
+			// Remote tracking branch not found yet, but local has commits
+			g.status.Ahead = 1
+		}
+	} else {
+		g.status.Ahead = 0
+	}
+
+	g.status.NeedsPush = g.status.HasRemote && (g.status.Ahead > 0 || g.status.LastError != "")
 }
 
 // EnsureRepo initializes the repository if .git is missing and updates user/remotes.
@@ -303,6 +335,7 @@ func (g *GitRepository) pushLocked(ctx context.Context) error {
 	if pushOut, pushErr := g.runGit(ctx, g.exportDir, "push", "-u", "origin", branch); pushErr != nil {
 		sanitizedErr := g.SanitizeOutput(fmt.Sprintf("push error: %s", pushOut))
 		g.status.LastError = sanitizedErr
+		g.status.NeedsPush = true
 		g.logger.Error("git push failed",
 			slog.String("output", g.SanitizeOutput(pushOut)),
 			slog.Any("error", pushErr),
@@ -312,6 +345,8 @@ func (g *GitRepository) pushLocked(ctx context.Context) error {
 
 	g.status.LastPushAt = time.Now()
 	g.status.LastError = ""
+	g.status.Ahead = 0
+	g.status.NeedsPush = false
 	g.logger.Info("Pushed configuration changes to remote Git repository", slog.String("branch", branch))
 	return nil
 }
@@ -388,6 +423,10 @@ func (g *GitRepository) CommitAndPush(ctx context.Context) (bool, error) {
 	g.status.LastCommitMsg = commitMsg
 	g.status.LastCommitHash = strings.TrimSpace(hashOut)
 	g.status.LastError = ""
+	g.status.Ahead++
+	if g.status.HasRemote {
+		g.status.NeedsPush = true
+	}
 
 	g.logger.Info("Committed updated configurations to Git",
 		slog.String("commit", g.status.LastCommitHash),

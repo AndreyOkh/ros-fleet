@@ -137,11 +137,11 @@
       </div>
 
       <div class="form-group full-width" id="backup_pwd_group"
-           style="margin-top: 14px; display: {{if or (eq $encryptState "true") (and (eq $encryptState "inherit") .Defaults.EncryptBackup)}}block{{else}}none{{end}};">
+           style="margin-top: 14px; display: {{if eq $encryptState "true"}}block{{else}}none{{end}};">
         <label for="backup_password">Пароль шифрования бэкапа</label>
         <input type="password" id="backup_password" name="backup_password" value="{{.Router.BackupPassword}}"
                placeholder="Пароль для шифрования .backup">
-        <small class="form-hint text-muted">По умолчанию: {{if .Defaults.BackupPassword}}•••••••• (задан в defaults){{else}}не задан{{end}}</small>
+        <small class="form-hint text-muted">Индивидуальный пароль для шифрования бэкапа этого устройства</small>
       </div>
 
       <div class="form-actions" style="margin-top: 24px;">
@@ -158,8 +158,6 @@
 
 <script>
   function onEncryptBackupChange(val) {
-    var defEncrypt = {{.Defaults.EncryptBackup}};
-    var show = (val === 'true') || (val === 'inherit' && defEncrypt);
-    document.getElementById('backup_pwd_group').style.display = show ? 'block' : 'none';
+    document.getElementById('backup_pwd_group').style.display = (val === 'true') ? 'block' : 'none';
   }
 </script>

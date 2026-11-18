@@ -52,6 +52,7 @@ type SummaryData struct {
 	NextRun       string
 	ScheduleTimes string
 	Timezone      string
+	GitStatus     gitrepo.GitStatus
 }
 
 // IndexData is passed to the main index.html template.
@@ -344,6 +345,13 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 
 	port, _ := strconv.Atoi(r.FormValue("port"))
 
+	encryptBackup := parseTriState(r.FormValue("encrypt_backup"))
+	backupPassword := strings.TrimSpace(r.FormValue("backup_password"))
+	// Only persist a device-specific backup password if encryption is explicitly enabled for this router.
+	if encryptBackup == nil || !*encryptBackup {
+		backupPassword = ""
+	}
+
 	router := config.RouterConfig{
 		Enabled:               &enabled,
 		Name:                  name,
@@ -355,8 +363,8 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 		PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
 		InsecureIgnoreHostKey: parseTriState(r.FormValue("insecure_ignore_host_key")),
 		ExportSensitive:       parseTriState(r.FormValue("export_sensitive")),
-		EncryptBackup:         parseTriState(r.FormValue("encrypt_backup")),
-		BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
+		EncryptBackup:         encryptBackup,
+		BackupPassword:        backupPassword,
 	}
 
 	if err := s.cfgMgr.UpsertRouter(router); err != nil {
@@ -493,6 +501,11 @@ func (s *Server) buildSummaryData() SummaryData {
 		timesStr = "не задано"
 	}
 
+	var gitStatus gitrepo.GitStatus
+	if s.runner != nil {
+		gitStatus = s.runner.GitStatus()
+	}
+
 	return SummaryData{
 		TotalCount:    len(cfg.Routers),
 		ActiveCount:   activeCount,
@@ -501,6 +514,7 @@ func (s *Server) buildSummaryData() SummaryData {
 		NextRun:       nextRunStr,
 		ScheduleTimes: timesStr,
 		Timezone:      cfg.Schedule.Timezone,
+		GitStatus:     gitStatus,
 	}
 }
 

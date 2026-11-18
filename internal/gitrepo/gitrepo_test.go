@@ -258,9 +258,41 @@ func TestGitPushWithLocalRemote(t *testing.T) {
 	if status.LastError != "" {
 		t.Errorf("expected no error in status, got %q", status.LastError)
 	}
+	if status.NeedsPush {
+		t.Errorf("expected NeedsPush to be false after successful push, got true")
+	}
+	if status.Ahead != 0 {
+		t.Errorf("expected Ahead to be 0 after successful push, got %d", status.Ahead)
+	}
 
-	// 3. Test explicit Push()
+	// 3. Test unpushed commit with AutoPush disabled
+	repo.cfg.AutoPush = false
+	if err := os.WriteFile(filepath.Join(exportDir, "Router1.rsc"), []byte("/system identity set name=R1-Updated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	committed2, err := repo.CommitAndPush(ctx)
+	if err != nil || !committed2 {
+		t.Fatalf("second CommitAndPush failed: %v", err)
+	}
+
+	statusUnpushed := repo.GetStatus()
+	if !statusUnpushed.NeedsPush {
+		t.Errorf("expected NeedsPush to be true when local has unpushed commit")
+	}
+	if statusUnpushed.Ahead != 1 {
+		t.Errorf("expected Ahead to be 1, got %d", statusUnpushed.Ahead)
+	}
+
+	// 4. Test explicit Push()
 	if err := repo.Push(ctx); err != nil {
 		t.Fatalf("explicit Push() failed: %v", err)
+	}
+
+	statusPushed := repo.GetStatus()
+	if statusPushed.NeedsPush {
+		t.Errorf("expected NeedsPush to be false after Push(), got true")
+	}
+	if statusPushed.Ahead != 0 {
+		t.Errorf("expected Ahead to be 0 after Push(), got %d", statusPushed.Ahead)
 	}
 }

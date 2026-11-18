@@ -134,8 +134,8 @@ func TestServerDashboardAndStatic(t *testing.T) {
 	if rrGit.Code != http.StatusOK {
 		t.Errorf("GET /dashboard/git-status returned status %d, want %d", rrGit.Code, http.StatusOK)
 	}
-	if !strings.Contains(rrGit.Body.String(), "git-status-badge") {
-		t.Errorf("expected git status HTML to contain 'git-status-badge'")
+	if !strings.Contains(rrGit.Body.String(), "git-status-card") {
+		t.Errorf("expected git status HTML to contain 'git-status-card'")
 	}
 
 	// 5. Test Git Push POST /dashboard/git-push
@@ -146,8 +146,8 @@ func TestServerDashboardAndStatic(t *testing.T) {
 	if rrPush.Code != http.StatusOK {
 		t.Errorf("POST /dashboard/git-push returned status %d, want %d", rrPush.Code, http.StatusOK)
 	}
-	if !strings.Contains(rrPush.Body.String(), "git-status-badge") {
-		t.Errorf("expected git push response to return 'git-status-badge' HTML")
+	if !strings.Contains(rrPush.Body.String(), "git-status-card") {
+		t.Errorf("expected git push response to return 'git-status-card' HTML")
 	}
 }
 
@@ -183,6 +183,8 @@ func TestServerToggleAndEndpoints(t *testing.T) {
 	form.Set("host", "10.0.0.1")
 	form.Set("insecure_ignore_host_key", "true")
 	form.Set("export_sensitive", "inherit")
+	form.Set("encrypt_backup", "inherit")
+	form.Set("backup_password", "should_be_cleared_on_inherit")
 
 	reqAdd := httptest.NewRequest(http.MethodPost, "/routers", strings.NewReader(form.Encode()))
 	reqAdd.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -205,6 +207,36 @@ func TestServerToggleAndEndpoints(t *testing.T) {
 	}
 	if rc.ExportSensitive != nil {
 		t.Errorf("expected ExportSensitive to be nil (inherited from defaults), got %v", *rc.ExportSensitive)
+	}
+	if rc.BackupPassword != "" {
+		t.Errorf("expected BackupPassword to be empty when encrypt_backup is inherit, got %q", rc.BackupPassword)
+	}
+
+	// Test Add router with explicit encryption enabled and custom password
+	formEnc := url.Values{}
+	formEnc.Set("name", "Router-Encrypted")
+	formEnc.Set("host", "10.0.0.2")
+	formEnc.Set("encrypt_backup", "true")
+	formEnc.Set("backup_password", "custom_secret_123")
+
+	reqAddEnc := httptest.NewRequest(http.MethodPost, "/routers", strings.NewReader(formEnc.Encode()))
+	reqAddEnc.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrAddEnc := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrAddEnc, reqAddEnc)
+
+	if rrAddEnc.Code != http.StatusOK {
+		t.Errorf("add encrypted router returned code %d", rrAddEnc.Code)
+	}
+
+	rcEnc, foundEnc := srv.cfgMgr.GetRouter("Router-Encrypted")
+	if !foundEnc {
+		t.Fatalf("expected router Router-Encrypted to exist in config")
+	}
+	if rcEnc.EncryptBackup == nil || !*rcEnc.EncryptBackup {
+		t.Errorf("expected EncryptBackup to be true")
+	}
+	if rcEnc.BackupPassword != "custom_secret_123" {
+		t.Errorf("expected BackupPassword to be custom_secret_123, got %q", rcEnc.BackupPassword)
 	}
 }
 
