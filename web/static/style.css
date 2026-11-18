@@ -69,10 +69,9 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 28px;
+  margin-bottom: 24px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border-color);
-  flex-wrap: wrap;
   gap: 16px;
 }
 
@@ -80,39 +79,42 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
 }
 
 .brand-icon {
-  font-size: 28px;
+  font-size: 26px;
   background: var(--surface-color);
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
 }
 
 .brand-title {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: -0.02em;
+  white-space: nowrap;
 }
 
 .brand-subtitle {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .header-actions .btn {
   height: 38px;
   min-height: 38px;
   max-height: 38px;
-  padding: 0 16px;
+  padding: 0 14px;
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
@@ -289,7 +291,18 @@ tr:hover td {
   text-overflow: ellipsis;
 }
 
-/* Badges */
+/* Badges & Hardware Info */
+.col-hardware {
+  min-width: 150px;
+}
+
+.hardware-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -305,12 +318,17 @@ tr:hover td {
   background: var(--info-bg);
   color: var(--info-color);
   font-family: monospace;
+  font-size: 11px;
 }
 
 .badge-model {
   background: rgba(148, 163, 184, 0.15);
   color: var(--text-primary);
   font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .badge-success {
