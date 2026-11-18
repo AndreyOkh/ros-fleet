@@ -52,7 +52,7 @@
     </header>
 
     <!-- KPI Summary Grid -->
-    <div id="summary-cards-container" hx-get="/dashboard/summary" hx-trigger="load, every 15s" hx-swap="innerHTML">
+    <div id="summary-cards-container" hx-get="/dashboard/summary" hx-trigger="load, every 30s" hx-swap="innerHTML">
       {{template "summary_cards.html" .Summary}}
     </div>
 
@@ -72,38 +72,80 @@
 
     <!-- Quick Filter Bar -->
     <div class="filters-bar">
+      <!-- Search Input -->
       <div class="filter-group filter-search-group">
         <span class="filter-icon">🔍</span>
         <input type="text" id="filter-search" class="filter-input" placeholder="Поиск по имени или IP..." autocomplete="off">
       </div>
 
-      <div class="filter-group">
-        <select id="filter-model" class="filter-select">
-          <option value="">Все модели</option>
-        </select>
+      <!-- Multi-select: Models -->
+      <div class="filter-group multiselect-wrapper" id="ms-wrapper-models">
+        <button type="button" class="multiselect-btn" id="ms-btn-models" aria-haspopup="listbox">
+          <span class="ms-title">Модель:</span>
+          <span class="ms-value">Все</span>
+          <span class="ms-badge" style="display: none;">0</span>
+          <span class="ms-caret">▾</span>
+        </button>
+        <div class="multiselect-dropdown" id="ms-dropdown-models">
+          <input type="text" class="ms-search-input" placeholder="Поиск модели..." autocomplete="off">
+          <div class="ms-actions">
+            <button type="button" class="ms-action-link select-all">Выбрать все</button>
+            <button type="button" class="ms-action-link clear-all">Сбросить</button>
+          </div>
+          <div class="ms-options-list" id="ms-list-models"></div>
+        </div>
       </div>
 
-      <div class="filter-group">
-        <select id="filter-version" class="filter-select">
-          <option value="">Все версии ROS</option>
-        </select>
+      <!-- Multi-select: Versions -->
+      <div class="filter-group multiselect-wrapper" id="ms-wrapper-versions">
+        <button type="button" class="multiselect-btn" id="ms-btn-versions" aria-haspopup="listbox">
+          <span class="ms-title">Версия:</span>
+          <span class="ms-value">Все</span>
+          <span class="ms-badge" style="display: none;">0</span>
+          <span class="ms-caret">▾</span>
+        </button>
+        <div class="multiselect-dropdown" id="ms-dropdown-versions">
+          <input type="text" class="ms-search-input" placeholder="Поиск версии..." autocomplete="off">
+          <div class="ms-actions">
+            <button type="button" class="ms-action-link select-all">Выбрать все</button>
+            <button type="button" class="ms-action-link clear-all">Сбросить</button>
+          </div>
+          <div class="ms-options-list" id="ms-list-versions"></div>
+        </div>
       </div>
 
-      <div class="filter-group">
-        <select id="filter-status" class="filter-select">
-          <option value="">Все статусы</option>
-          <option value="success">Успешно</option>
-          <option value="error">Ошибка</option>
-          <option value="never">Не выполнялся</option>
-        </select>
+      <!-- Multi-select: Status -->
+      <div class="filter-group multiselect-wrapper" id="ms-wrapper-statuses">
+        <button type="button" class="multiselect-btn" id="ms-btn-statuses" aria-haspopup="listbox">
+          <span class="ms-title">Статус:</span>
+          <span class="ms-value">Все</span>
+          <span class="ms-badge" style="display: none;">0</span>
+          <span class="ms-caret">▾</span>
+        </button>
+        <div class="multiselect-dropdown" id="ms-dropdown-statuses">
+          <div class="ms-actions">
+            <button type="button" class="ms-action-link select-all">Выбрать все</button>
+            <button type="button" class="ms-action-link clear-all">Сбросить</button>
+          </div>
+          <div class="ms-options-list" id="ms-list-statuses"></div>
+        </div>
       </div>
 
-      <div class="filter-group">
-        <select id="filter-enabled" class="filter-select">
-          <option value="">Все состояния</option>
-          <option value="true">Включен</option>
-          <option value="false">Отключен</option>
-        </select>
+      <!-- Multi-select: Enabled -->
+      <div class="filter-group multiselect-wrapper" id="ms-wrapper-enabled">
+        <button type="button" class="multiselect-btn" id="ms-btn-enabled" aria-haspopup="listbox">
+          <span class="ms-title">Активность:</span>
+          <span class="ms-value">Все</span>
+          <span class="ms-badge" style="display: none;">0</span>
+          <span class="ms-caret">▾</span>
+        </button>
+        <div class="multiselect-dropdown" id="ms-dropdown-enabled">
+          <div class="ms-actions">
+            <button type="button" class="ms-action-link select-all">Выбрать все</button>
+            <button type="button" class="ms-action-link clear-all">Сбросить</button>
+          </div>
+          <div class="ms-options-list" id="ms-list-enabled"></div>
+        </div>
       </div>
 
       <button id="filter-reset-btn" type="button" class="btn btn-sm btn-secondary" style="display: none;" title="Сбросить все фильтры">
@@ -111,7 +153,7 @@
       </button>
     </div>
 
-    <div id="routers-table-container" hx-get="/routers/table" hx-trigger="every 15s" hx-swap="innerHTML">
+    <div id="routers-table-container">
       {{template "table_container.html" .Table}}
     </div>
   </div>
@@ -121,67 +163,219 @@
 
   <script>
   (function() {
-    function getFilterValues() {
-      return {
-        search: (document.getElementById('filter-search')?.value || '').trim().toLowerCase(),
-        model: document.getElementById('filter-model')?.value || '',
-        version: document.getElementById('filter-version')?.value || '',
-        status: document.getElementById('filter-status')?.value || '',
-        enabled: document.getElementById('filter-enabled')?.value || ''
-      };
+    var STORAGE_KEY = 'ros_fleet_filters_v2';
+
+    var filterState = {
+      search: '',
+      models: new Set(),
+      versions: new Set(),
+      statuses: new Set(),
+      enabled: new Set()
+    };
+
+    // Restore from sessionStorage if available
+    try {
+      var saved = sessionStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        var parsed = JSON.parse(saved);
+        if (typeof parsed.search === 'string') filterState.search = parsed.search;
+        if (Array.isArray(parsed.models)) filterState.models = new Set(parsed.models);
+        if (Array.isArray(parsed.versions)) filterState.versions = new Set(parsed.versions);
+        if (Array.isArray(parsed.statuses)) filterState.statuses = new Set(parsed.statuses);
+        if (Array.isArray(parsed.enabled)) filterState.enabled = new Set(parsed.enabled);
+      }
+    } catch (e) {
+      // ignore
     }
 
-    function updateDropdownOptions() {
+    function saveState() {
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+          search: filterState.search,
+          models: Array.from(filterState.models),
+          versions: Array.from(filterState.versions),
+          statuses: Array.from(filterState.statuses),
+          enabled: Array.from(filterState.enabled)
+        }));
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    function toggleDropdown(wrapper) {
+      var dropdown = wrapper.querySelector('.multiselect-dropdown');
+      var btn = wrapper.querySelector('.multiselect-btn');
+      var isOpen = dropdown.classList.contains('show');
+
+      closeAllDropdowns();
+
+      if (!isOpen) {
+        dropdown.classList.add('show');
+        btn.classList.add('is-open');
+        var searchInput = dropdown.querySelector('.ms-search-input');
+        if (searchInput) {
+          searchInput.value = '';
+          filterDropdownOptions(dropdown, '');
+          setTimeout(function() { searchInput.focus(); }, 50);
+        }
+      }
+    }
+
+    function closeAllDropdowns() {
+      document.querySelectorAll('.multiselect-dropdown.show').forEach(function(d) {
+        d.classList.remove('show');
+      });
+      document.querySelectorAll('.multiselect-btn.is-open').forEach(function(b) {
+        b.classList.remove('is-open');
+      });
+    }
+
+    function filterDropdownOptions(dropdown, query) {
+      var q = (query || '').trim().toLowerCase();
+      dropdown.querySelectorAll('.ms-option').forEach(function(opt) {
+        var text = (opt.getAttribute('data-search') || '').toLowerCase();
+        opt.style.display = (!q || text.includes(q)) ? '' : 'none';
+      });
+    }
+
+    function updateButtonUI(type) {
+      var set = filterState[type];
+      var btn = document.getElementById('ms-btn-' + type);
+      if (!btn) return;
+
+      var valSpan = btn.querySelector('.ms-value');
+      var badge = btn.querySelector('.ms-badge');
+
+      if (!set || set.size === 0) {
+        btn.classList.remove('has-selected');
+        if (valSpan) valSpan.textContent = 'Все';
+        if (badge) badge.style.display = 'none';
+      } else {
+        btn.classList.add('has-selected');
+        if (badge) {
+          badge.textContent = set.size;
+          badge.style.display = 'inline-block';
+        }
+        if (set.size === 1) {
+          var val = Array.from(set)[0];
+          if (type === 'statuses') {
+            var sMap = { success: 'Успешно', error: 'Ошибка', never: 'Не выполнялся', running: 'Выполняется' };
+            val = sMap[val] || val;
+          } else if (type === 'enabled') {
+            val = (val === 'true') ? 'Включен' : 'Отключен';
+          } else if (type === 'versions') {
+            val = 'v' + val;
+          }
+          if (valSpan) valSpan.textContent = val;
+        } else {
+          if (valSpan) valSpan.textContent = 'выбрано: ' + set.size;
+        }
+      }
+    }
+
+    function renderOptionsList(listEl, itemsMap, type, formatLabel) {
+      if (!listEl) return;
+      listEl.innerHTML = '';
+
+      var sortedKeys = Array.from(itemsMap.keys()).sort();
+      sortedKeys.forEach(function(key) {
+        var count = itemsMap.get(key);
+        var label = formatLabel ? formatLabel(key) : key;
+        var isChecked = filterState[type].has(key);
+
+        var optLabel = document.createElement('label');
+        optLabel.className = 'ms-option';
+        optLabel.setAttribute('data-search', label);
+
+        var input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = key;
+        input.checked = isChecked;
+
+        input.addEventListener('change', function() {
+          if (this.checked) {
+            filterState[type].add(key);
+          } else {
+            filterState[type].delete(key);
+          }
+          updateButtonUI(type);
+          applyFilters();
+          saveState();
+        });
+
+        var textSpan = document.createElement('span');
+        textSpan.className = 'ms-option-label';
+        textSpan.textContent = label;
+
+        var countSpan = document.createElement('span');
+        countSpan.className = 'ms-option-count';
+        countSpan.textContent = count;
+
+        optLabel.appendChild(input);
+        optLabel.appendChild(textSpan);
+        optLabel.appendChild(countSpan);
+        listEl.appendChild(optLabel);
+      });
+    }
+
+    function refreshDropdowns() {
       var rows = document.querySelectorAll('#devices-table-body tr[data-name]');
-      var modelSelect = document.getElementById('filter-model');
-      var versionSelect = document.getElementById('filter-version');
-      if (!modelSelect || !versionSelect) return;
-
-      var curModel = modelSelect.value;
-      var curVersion = versionSelect.value;
-
-      var models = new Set();
-      var versions = new Set();
+      var models = new Map();
+      var versions = new Map();
+      var statuses = new Map([['success', 0], ['error', 0], ['never', 0], ['running', 0]]);
+      var enabled = new Map([['true', 0], ['false', 0]]);
 
       rows.forEach(function(row) {
         var m = row.getAttribute('data-model');
-        if (m && m !== 'Unknown') models.add(m);
+        if (m && m !== 'Unknown') models.set(m, (models.get(m) || 0) + 1);
+
         var v = row.getAttribute('data-version');
-        if (v && v !== 'Unknown') versions.add(v);
+        if (v && v !== 'Unknown') versions.set(v, (versions.get(v) || 0) + 1);
+
+        var s = row.getAttribute('data-status') || 'never';
+        if (statuses.has(s)) statuses.set(s, statuses.get(s) + 1);
+
+        var en = row.getAttribute('data-enabled') || 'false';
+        if (enabled.has(en)) enabled.set(en, enabled.get(en) + 1);
       });
 
-      // Populate Models
-      modelSelect.innerHTML = '<option value="">Все модели</option>';
-      Array.from(models).sort().forEach(function(m) {
-        var opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m;
-        if (m === curModel) opt.selected = true;
-        modelSelect.appendChild(opt);
+      renderOptionsList(document.getElementById('ms-list-models'), models, 'models');
+      renderOptionsList(document.getElementById('ms-list-versions'), versions, 'versions', function(v) { return 'v' + v; });
+      renderOptionsList(document.getElementById('ms-list-statuses'), statuses, 'statuses', function(s) {
+        var m = { success: 'Успешно ✅', error: 'Ошибка ❌', never: 'Не выполнялся ⚪', running: 'Выполняется ⏳' };
+        return m[s] || s;
+      });
+      renderOptionsList(document.getElementById('ms-list-enabled'), enabled, 'enabled', function(e) {
+        return (e === 'true') ? 'Включен ⚡' : 'Отключен ⏸';
       });
 
-      // Populate Versions
-      versionSelect.innerHTML = '<option value="">Все версии ROS</option>';
-      Array.from(versions).sort().forEach(function(v) {
-        var opt = document.createElement('option');
-        opt.value = v;
-        opt.textContent = 'v' + v;
-        if (v === curVersion) opt.selected = true;
-        versionSelect.appendChild(opt);
-      });
+      updateButtonUI('models');
+      updateButtonUI('versions');
+      updateButtonUI('statuses');
+      updateButtonUI('enabled');
     }
 
     function applyFilters() {
-      var f = getFilterValues();
       var rows = document.querySelectorAll('#devices-table-body tr[data-name]');
-      var visibleCount = 0;
-      var totalCount = rows.length;
+      var container = document.getElementById('routers-table-container');
+      var q = (filterState.search || '').trim().toLowerCase();
+      var hasFilter = Boolean(q || filterState.models.size > 0 || filterState.versions.size > 0 || filterState.statuses.size > 0 || filterState.enabled.size > 0);
 
-      var hasActiveFilter = Boolean(f.search || f.model || f.version || f.status || f.enabled);
+      if (container) {
+        if (hasFilter) {
+          container.classList.add('is-filtered');
+        } else {
+          container.classList.remove('is-filtered');
+        }
+      }
+
       var resetBtn = document.getElementById('filter-reset-btn');
       if (resetBtn) {
-        resetBtn.style.display = hasActiveFilter ? 'inline-flex' : 'none';
+        resetBtn.style.display = hasFilter ? 'inline-flex' : 'none';
       }
+
+      var visibleCount = 0;
+      var totalCount = rows.length;
 
       rows.forEach(function(row) {
         var name = (row.getAttribute('data-name') || '').toLowerCase();
@@ -189,13 +383,13 @@
         var model = row.getAttribute('data-model') || '';
         var version = row.getAttribute('data-version') || '';
         var status = row.getAttribute('data-status') || '';
-        var enabled = row.getAttribute('data-enabled') || '';
+        var en = row.getAttribute('data-enabled') || '';
 
-        var matchSearch = !f.search || name.includes(f.search) || host.includes(f.search);
-        var matchModel = !f.model || model === f.model;
-        var matchVersion = !f.version || version === f.version;
-        var matchStatus = !f.status || status === f.status;
-        var matchEnabled = !f.enabled || enabled === f.enabled;
+        var matchSearch = !q || name.includes(q) || host.includes(q);
+        var matchModel = filterState.models.size === 0 || filterState.models.has(model);
+        var matchVersion = filterState.versions.size === 0 || filterState.versions.has(version);
+        var matchStatus = filterState.statuses.size === 0 || filterState.statuses.has(status);
+        var matchEnabled = filterState.enabled.size === 0 || filterState.enabled.has(en);
 
         if (matchSearch && matchModel && matchVersion && matchStatus && matchEnabled) {
           row.style.display = '';
@@ -205,14 +399,14 @@
         }
       });
 
-      var emptyFilterRow = document.getElementById('no-matching-filter-row');
-      if (emptyFilterRow) {
-        emptyFilterRow.style.display = (totalCount > 0 && visibleCount === 0) ? '' : 'none';
+      var emptyRow = document.getElementById('no-matching-filter-row');
+      if (emptyRow) {
+        emptyRow.style.display = (totalCount > 0 && visibleCount === 0) ? '' : 'none';
       }
 
       var counter = document.getElementById('filter-counter');
       if (counter) {
-        if (hasActiveFilter && totalCount > 0) {
+        if (hasFilter && totalCount > 0) {
           counter.textContent = 'Показано: ' + visibleCount + ' из ' + totalCount;
           counter.style.display = 'inline-block';
         } else {
@@ -222,37 +416,123 @@
       }
     }
 
-    function resetFilters() {
-      var s = document.getElementById('filter-search'); if (s) s.value = '';
-      var m = document.getElementById('filter-model'); if (m) m.value = '';
-      var v = document.getElementById('filter-version'); if (v) v.value = '';
-      var st = document.getElementById('filter-status'); if (st) st.value = '';
-      var en = document.getElementById('filter-enabled'); if (en) en.value = '';
+    function resetAllFilters() {
+      filterState.search = '';
+      filterState.models.clear();
+      filterState.versions.clear();
+      filterState.statuses.clear();
+      filterState.enabled.clear();
+
+      var searchInput = document.getElementById('filter-search');
+      if (searchInput) searchInput.value = '';
+
+      document.querySelectorAll('.ms-options-list input[type="checkbox"]').forEach(function(cb) {
+        cb.checked = false;
+      });
+
+      updateButtonUI('models');
+      updateButtonUI('versions');
+      updateButtonUI('statuses');
+      updateButtonUI('enabled');
+
       applyFilters();
+      saveState();
+    }
+
+    function setupDropdownActions(type, listId, wrapperId) {
+      var wrapper = document.getElementById(wrapperId);
+      if (!wrapper) return;
+
+      var selectAllBtn = wrapper.querySelector('.select-all');
+      var clearAllBtn = wrapper.querySelector('.clear-all');
+      var list = document.getElementById(listId);
+
+      if (selectAllBtn && list) {
+        selectAllBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          list.querySelectorAll('.ms-option').forEach(function(opt) {
+            if (opt.style.display !== 'none') {
+              var cb = opt.querySelector('input[type="checkbox"]');
+              if (cb) {
+                cb.checked = true;
+                filterState[type].add(cb.value);
+              }
+            }
+          });
+          updateButtonUI(type);
+          applyFilters();
+          saveState();
+        });
+      }
+
+      if (clearAllBtn && list) {
+        clearAllBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          filterState[type].clear();
+          list.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
+            cb.checked = false;
+          });
+          updateButtonUI(type);
+          applyFilters();
+          saveState();
+        });
+      }
+
+      var searchInput = wrapper.querySelector('.ms-search-input');
+      if (searchInput) {
+        searchInput.addEventListener('input', function() {
+          var dropdown = wrapper.querySelector('.multiselect-dropdown');
+          filterDropdownOptions(dropdown, this.value);
+        });
+      }
     }
 
     document.addEventListener('DOMContentLoaded', function() {
-      updateDropdownOptions();
-      applyFilters();
+      var searchInput = document.getElementById('filter-search');
+      if (searchInput) {
+        if (filterState.search) searchInput.value = filterState.search;
+        searchInput.addEventListener('input', function() {
+          filterState.search = this.value;
+          applyFilters();
+          saveState();
+        });
+      }
 
-      var inputs = ['filter-search', 'filter-model', 'filter-version', 'filter-status', 'filter-enabled'];
-      inputs.forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) {
-          el.addEventListener('input', applyFilters);
-          el.addEventListener('change', applyFilters);
+      ['models', 'versions', 'statuses', 'enabled'].forEach(function(type) {
+        var wrapper = document.getElementById('ms-wrapper-' + type);
+        var btn = document.getElementById('ms-btn-' + type);
+        if (btn && wrapper) {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            toggleDropdown(wrapper);
+          });
         }
+        setupDropdownActions(type, 'ms-list-' + type, 'ms-wrapper-' + type);
+      });
+
+      // Close dropdowns on click outside
+      document.addEventListener('click', function(e) {
+        if (!e.target.closest('.multiselect-wrapper')) {
+          closeAllDropdowns();
+        }
+      });
+
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeAllDropdowns();
       });
 
       var resetBtn = document.getElementById('filter-reset-btn');
       if (resetBtn) {
-        resetBtn.addEventListener('click', resetFilters);
+        resetBtn.addEventListener('click', resetAllFilters);
       }
+
+      refreshDropdowns();
+      applyFilters();
     });
 
     document.body.addEventListener('htmx:afterSwap', function(evt) {
       if (evt.detail.target && (evt.detail.target.id === 'routers-table-container' || evt.detail.target.id.startsWith('router-row-'))) {
-        updateDropdownOptions();
+        refreshDropdowns();
         applyFilters();
       }
     });

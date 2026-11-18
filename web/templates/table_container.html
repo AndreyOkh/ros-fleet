@@ -1,5 +1,9 @@
 {{if .IsRunning}}
-<div class="backup-running-banner">
+<div class="backup-running-banner"
+     hx-get="/routers/table"
+     hx-trigger="every 8s"
+     hx-target="#routers-table-container"
+     hx-swap="innerHTML">
   <span class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></span>
   <span>Выполняется общее резервное копирование устройств в фоновом режиме... Таблица обновляется автоматически.</span>
 </div>

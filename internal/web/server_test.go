@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndreyOkh/ros-fleet/internal/config"
 	"github.com/AndreyOkh/ros-fleet/internal/runner"
@@ -249,6 +250,11 @@ func TestServerToggleAndEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(rrBackupAll.Body.String(), "card-table") {
 		t.Errorf("expected table HTML in response to POST /backup/all")
+	}
+
+	// Wait for background backup to finish before tempDir cleanup
+	for srv.runner.IsRunning() {
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

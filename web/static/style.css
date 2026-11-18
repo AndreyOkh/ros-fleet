@@ -661,6 +661,222 @@ input[type="text"].filter-input {
   transition: border-color 0.15s;
 }
 
+/* Multi-Select Dropdowns */
+.multiselect-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.multiselect-btn {
+  height: 35px;
+  padding: 0 12px;
+  font-size: 13px;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.multiselect-btn:hover {
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.multiselect-btn.is-open {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.multiselect-btn.has-selected {
+  border-color: var(--accent-color);
+  background: rgba(59, 130, 246, 0.08);
+  font-weight: 500;
+}
+
+.ms-title {
+  color: var(--text-secondary);
+}
+
+.ms-value {
+  color: var(--text-primary);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-badge {
+  background: var(--accent-color);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 1px 6px;
+  line-height: 1.2;
+}
+
+.ms-caret {
+  font-size: 9px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+  margin-left: 2px;
+}
+
+.multiselect-btn.is-open .ms-caret {
+  transform: rotate(180deg);
+}
+
+.multiselect-dropdown {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  min-width: 230px;
+  max-width: 340px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  padding: 8px;
+  display: none;
+  animation: fadeInDown 0.12s ease-out;
+}
+
+.multiselect-dropdown.show {
+  display: block;
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ms-search-input {
+  width: 100%;
+  height: 30px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-color);
+  color: var(--text-primary);
+  outline: none;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+}
+
+.ms-search-input:focus {
+  border-color: var(--accent-color);
+}
+
+.ms-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 4px;
+}
+
+.ms-action-link {
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: var(--accent-color);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.1s ease;
+}
+
+.ms-action-link:hover {
+  text-decoration: underline;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.ms-options-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ms-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-primary);
+  transition: background 0.1s ease;
+  user-select: none;
+}
+
+.ms-option:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.ms-option input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+  accent-color: var(--accent-color);
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.ms-option-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-option-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+  flex-shrink: 0;
+  padding-left: 6px;
+}
+
+/* Prevent layout jump and flicker during filtering */
+#routers-table-container.is-filtered tr[data-name] {
+  display: none;
+}
+
+#routers-table-container {
+  transition: opacity 0.15s ease;
+}
+
+#routers-table-container.htmx-swapping {
+  opacity: 0.85;
+}
+
 .filter-counter {
   font-size: 13px;
   font-weight: 500;
