@@ -323,13 +323,14 @@ func (r *Runner) backupRouter(parentCtx context.Context, eff config.EffectiveRou
 	}
 
 	// 7. Download .rsc file, normalize RouterOS date/time comment, and save to exportDir
-	rscFile, err := client.OpenRemoteFile(remoteRscPath)
-	if err != nil {
-		report.Err = fmt.Errorf("failed to open remote rsc file: %w", err)
-		return report
-	}
-	rawRscBytes, err := io.ReadAll(rscFile)
-	_ = rscFile.Close()
+	rawRscBytes, err := func() ([]byte, error) {
+		rscFile, err := client.OpenRemoteFile(remoteRscPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open remote rsc file: %w", err)
+		}
+		defer rscFile.Close()
+		return io.ReadAll(rscFile)
+	}()
 	if err != nil {
 		report.Err = fmt.Errorf("failed to read remote rsc file: %w", err)
 		return report
@@ -344,13 +345,14 @@ func (r *Runner) backupRouter(parentCtx context.Context, eff config.EffectiveRou
 	report.RscSize = rscSize
 
 	// 8. Download .backup binary file and save to binaryDir
-	backupFile, err := client.OpenRemoteFile(remoteBackupPath)
-	if err != nil {
-		report.Err = fmt.Errorf("failed to open remote backup file: %w", err)
-		return report
-	}
-	backupBytes, err := r.storage.SaveStream(backupFile, destPaths.LocalBackupPath)
-	_ = backupFile.Close()
+	backupBytes, err := func() (int64, error) {
+		backupFile, err := client.OpenRemoteFile(remoteBackupPath)
+		if err != nil {
+			return 0, fmt.Errorf("failed to open remote backup file: %w", err)
+		}
+		defer backupFile.Close()
+		return r.storage.SaveStream(backupFile, destPaths.LocalBackupPath)
+	}()
 	if err != nil {
 		report.Err = fmt.Errorf("failed to download and save binary backup file: %w", err)
 		return report

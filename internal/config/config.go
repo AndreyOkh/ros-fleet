@@ -135,6 +135,28 @@ func (r *RouterConfig) SetEnabled(val bool) {
 	r.Enabled = &val
 }
 
+// Clone returns a deep copy of the RouterConfig including all pointer fields.
+func (r RouterConfig) Clone() RouterConfig {
+	c := r
+	if r.Enabled != nil {
+		v := *r.Enabled
+		c.Enabled = &v
+	}
+	if r.InsecureIgnoreHostKey != nil {
+		v := *r.InsecureIgnoreHostKey
+		c.InsecureIgnoreHostKey = &v
+	}
+	if r.ExportSensitive != nil {
+		v := *r.ExportSensitive
+		c.ExportSensitive = &v
+	}
+	if r.EncryptBackup != nil {
+		v := *r.EncryptBackup
+		c.EncryptBackup = &v
+	}
+	return c
+}
+
 // Effective resolves router fields with defaults.
 func (r RouterConfig) Effective(def DefaultsConfig) EffectiveRouterConfig {
 	eff := EffectiveRouterConfig{
@@ -385,37 +407,41 @@ func NewManager(path string) (*Manager, error) {
 	}, nil
 }
 
-// Get returns a shallow copy of the current configuration.
+// Get returns a deep copy of the current configuration.
 func (m *Manager) Get() Config {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	c := *m.cfg
 	c.Routers = make([]RouterConfig, len(m.cfg.Routers))
-	copy(c.Routers, m.cfg.Routers)
+	for i, r := range m.cfg.Routers {
+		c.Routers[i] = r.Clone()
+	}
 	c.Schedule.Times = make([]string, len(m.cfg.Schedule.Times))
 	copy(c.Schedule.Times, m.cfg.Schedule.Times)
 	return c
 }
 
-// ListRouters returns a copy of the router slice.
+// ListRouters returns a deep copy of the router slice.
 func (m *Manager) ListRouters() []RouterConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	res := make([]RouterConfig, len(m.cfg.Routers))
-	copy(res, m.cfg.Routers)
+	for i, r := range m.cfg.Routers {
+		res[i] = r.Clone()
+	}
 	return res
 }
 
-// GetRouter retrieves a router configuration by name.
+// GetRouter retrieves a deep copy of a router configuration by name.
 func (m *Manager) GetRouter(name string) (RouterConfig, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	for _, r := range m.cfg.Routers {
 		if r.Name == name {
-			return r, true
+			return r.Clone(), true
 		}
 	}
 	return RouterConfig{}, false

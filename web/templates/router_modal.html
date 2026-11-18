@@ -28,27 +28,32 @@
 
         <div class="form-group">
           <label for="port">SSH Порт</label>
-          <input type="number" id="port" name="port" value="{{if gt .Router.Port 0}}{{.Router.Port}}{{end}}" placeholder="По умолчанию: {{.Defaults.Port}}">
+          <input type="number" id="port" name="port" value="{{if gt .Router.Port 0}}{{.Router.Port}}{{end}}" placeholder="22">
+          <small class="form-hint text-muted">По умолчанию: {{.Defaults.Port}}</small>
         </div>
 
         <div class="form-group">
           <label for="user">SSH Пользователь</label>
-          <input type="text" id="user" name="user" value="{{.Router.User}}" placeholder="По умолчанию: {{if .Defaults.User}}{{.Defaults.User}}{{else}}admin{{end}}">
+          <input type="text" id="user" name="user" value="{{.Router.User}}" placeholder="admin">
+          <small class="form-hint text-muted">По умолчанию: {{if .Defaults.User}}{{.Defaults.User}}{{else}}admin{{end}}</small>
         </div>
 
         <div class="form-group full-width">
           <label for="password">Пароль устройства</label>
-          <input type="password" id="password" name="password" value="{{.Router.Password}}" placeholder="По умолчанию: {{if .Defaults.Password}}•••••••• (задан в defaults){{else}}пусто{{end}}">
+          <input type="password" id="password" name="password" value="{{.Router.Password}}" placeholder="••••••••">
+          <small class="form-hint text-muted">По умолчанию: {{if .Defaults.Password}}•••••••• (задан в defaults){{else}}не задан{{end}}</small>
         </div>
 
         <div class="form-group">
           <label for="private_key_path">Путь к SSH-ключу</label>
-          <input type="text" id="private_key_path" name="private_key_path" value="{{.Router.PrivateKeyPath}}" placeholder="По умолчанию: {{if .Defaults.PrivateKeyPath}}{{.Defaults.PrivateKeyPath}}{{else}}пусто{{end}}">
+          <input type="text" id="private_key_path" name="private_key_path" value="{{.Router.PrivateKeyPath}}" placeholder="/root/.ssh/id_ed25519">
+          <small class="form-hint text-muted">По умолчанию: {{if .Defaults.PrivateKeyPath}}{{.Defaults.PrivateKeyPath}}{{else}}не задан{{end}}</small>
         </div>
 
         <div class="form-group">
           <label for="private_key_passphrase">Пароль от ключа</label>
           <input type="password" id="private_key_passphrase" name="private_key_passphrase" value="{{.Router.PrivateKeyPassphrase}}" placeholder="Опционально">
+          <small class="form-hint text-muted">Для ключей с passphrase</small>
         </div>
       </div>
 
@@ -57,7 +62,7 @@
       <div class="tri-state-group">
         <div class="tri-state-header">
           <span class="tri-state-label">Проверка SSH HostKey</span>
-          <span class="tri-state-desc">Отключение строгой проверки known_hosts для LAN</span>
+          <span class="tri-state-desc">Отключение строгой проверки known_hosts</span>
         </div>
         <div class="tri-state-toggle">
           <label class="tri-state-option">
@@ -66,12 +71,15 @@
           </label>
           <label class="tri-state-option">
             <input type="radio" name="insecure_ignore_host_key" value="inherit" {{if eq $insecureState "inherit"}}checked{{end}}>
-            <span class="tri-state-pill pill-inherit">По-умолчанию <small>({{if .Defaults.InsecureIgnoreHostKey}}Отключена{{else}}Строгая{{end}})</small></span>
+            <span class="tri-state-pill pill-inherit">По умолчанию</span>
           </label>
           <label class="tri-state-option">
             <input type="radio" name="insecure_ignore_host_key" value="true" {{if eq $insecureState "true"}}checked{{end}}>
             <span class="tri-state-pill pill-true">Вкл</span>
           </label>
+        </div>
+        <div class="tri-state-hint text-muted">
+          <small>Значение по умолчанию: <strong>{{if .Defaults.InsecureIgnoreHostKey}}Отключена{{else}}Строгая проверка{{end}}</strong></small>
         </div>
       </div>
 
@@ -88,12 +96,15 @@
           </label>
           <label class="tri-state-option">
             <input type="radio" name="export_sensitive" value="inherit" {{if eq $sensitiveState "inherit"}}checked{{end}}>
-            <span class="tri-state-pill pill-inherit">По-умолчанию <small>({{if .Defaults.ExportSensitive}}Включены{{else}}Скрыты{{end}})</small></span>
+            <span class="tri-state-pill pill-inherit">По умолчанию</span>
           </label>
           <label class="tri-state-option">
             <input type="radio" name="export_sensitive" value="true" {{if eq $sensitiveState "true"}}checked{{end}}>
             <span class="tri-state-pill pill-true">Вкл</span>
           </label>
+        </div>
+        <div class="tri-state-hint text-muted">
+          <small>Значение по умолчанию: <strong>{{if .Defaults.ExportSensitive}}Включены{{else}}Скрыты{{end}}</strong></small>
         </div>
       </div>
 
@@ -112,7 +123,7 @@
           <label class="tri-state-option">
             <input type="radio" name="encrypt_backup" value="inherit" {{if eq $encryptState "inherit"}}checked{{end}}
                    onchange="onEncryptBackupChange('inherit')">
-            <span class="tri-state-pill pill-inherit">По-умолчанию <small>({{if .Defaults.EncryptBackup}}Шифровать{{else}}Без шифрования{{end}})</small></span>
+            <span class="tri-state-pill pill-inherit">По умолчанию</span>
           </label>
           <label class="tri-state-option">
             <input type="radio" name="encrypt_backup" value="true" {{if eq $encryptState "true"}}checked{{end}}
@@ -120,13 +131,17 @@
             <span class="tri-state-pill pill-true">Вкл</span>
           </label>
         </div>
+        <div class="tri-state-hint text-muted">
+          <small>Значение по умолчанию: <strong>{{if .Defaults.EncryptBackup}}Шифровать{{else}}Без шифрования{{end}}</strong></small>
+        </div>
       </div>
 
       <div class="form-group full-width" id="backup_pwd_group"
            style="margin-top: 14px; display: {{if or (eq $encryptState "true") (and (eq $encryptState "inherit") .Defaults.EncryptBackup)}}block{{else}}none{{end}};">
         <label for="backup_password">Пароль шифрования бэкапа</label>
         <input type="password" id="backup_password" name="backup_password" value="{{.Router.BackupPassword}}"
-               placeholder="По умолчанию: {{if .Defaults.BackupPassword}}•••••••• (задан в defaults){{else}}стойкий пароль шифрования{{end}}">
+               placeholder="Стойкий пароль шифрования">
+        <small class="form-hint text-muted">По умолчанию: {{if .Defaults.BackupPassword}}•••••••• (задан в defaults){{else}}не задан{{end}}</small>
       </div>
 
       <div class="form-actions" style="margin-top: 24px;">

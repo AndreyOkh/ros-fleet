@@ -234,15 +234,15 @@ func (c *Client) RunCommand(ctx context.Context, cmd string) (string, error) {
 
 // FetchDeviceInfo queries system resource and routerboard information from the device.
 func (c *Client) FetchDeviceInfo(ctx context.Context) (*DeviceInfo, error) {
-	resourceOut, err := c.RunCommand(ctx, "/system resource print")
+	resourceOut, err := c.RunCommand(ctx, "/system resource print without-paging")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query /system resource print: %w", err)
 	}
 
 	resourceMap := parseRouterOSKeyValues(resourceOut)
 
-	// Query /system routerboard print (may fail on CHR / x86, which is normal)
-	routerboardOut, _ := c.RunCommand(ctx, "/system routerboard print")
+	// Query /system routerboard print without-paging (may fail or return routerboard: no on CHR / x86)
+	routerboardOut, _ := c.RunCommand(ctx, "/system routerboard print without-paging")
 	rbMap := parseRouterOSKeyValues(routerboardOut)
 
 	info := &DeviceInfo{
@@ -255,9 +255,10 @@ func (c *Client) FetchDeviceInfo(ctx context.Context) (*DeviceInfo, error) {
 		TotalMemory: resourceMap["total-memory"],
 	}
 
-	// Model selection: check routerboard model first, then board-name, then platform
-	if rbModel := rbMap["model"]; rbModel != "" {
-		info.Model = rbModel
+	// Model selection: check routerboard model first, handling CHR/x86 where routerboard is "no"
+	isRouterboard := rbMap["routerboard"] != "no"
+	if isRouterboard && rbMap["model"] != "" {
+		info.Model = rbMap["model"]
 	} else if info.BoardName != "" {
 		info.Model = info.BoardName
 	} else if platform := resourceMap["platform"]; platform != "" {
@@ -394,7 +395,7 @@ func (c *Client) WaitForFile(ctx context.Context, baseFilename, extension string
 				}
 
 				if foundPath == "" {
-					searchCmd := fmt.Sprintf(`/file print detail where name~"%s"`, baseFilename)
+					searchCmd := fmt.Sprintf(`/file print detail without-paging where name~"%s"`, baseFilename)
 					out, err := c.RunCommand(ctx, searchCmd)
 					if err == nil && out != "" {
 						matches := fileNameExtractRegex.FindAllStringSubmatch(out, -1)

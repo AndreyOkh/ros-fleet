@@ -95,6 +95,15 @@ func TestServerDashboardAndStatic(t *testing.T) {
 	if !strings.Contains(body, "Router-Test") {
 		t.Errorf("expected dashboard HTML to list 'Router-Test'")
 	}
+	if !strings.Contains(body, "Устройства") {
+		t.Errorf("expected dashboard HTML to contain section title 'Устройства'")
+	}
+	if !strings.Contains(body, "filters-bar") {
+		t.Errorf("expected dashboard HTML to contain 'filters-bar'")
+	}
+	if !strings.Contains(body, "devices-table") {
+		t.Errorf("expected dashboard HTML to contain 'devices-table'")
+	}
 
 	// 2. Test GET /static/style.css
 	reqCSS := httptest.NewRequest(http.MethodGet, "/static/style.css", nil)
@@ -207,3 +216,98 @@ func TestServerBasicAuth(t *testing.T) {
 		t.Errorf("expected status 200 OK with valid credentials, got %d", rrAuth.Code)
 	}
 }
+
+func TestServerBackupsEndpoints(t *testing.T) {
+	srv, _ := setupTestServer(t, "", "")
+	cfg := srv.cfgMgr.Get()
+
+	// 1. Initially empty backups modal
+	reqModal := httptest.NewRequest(http.MethodGet, "/routers/Router-Test/backups", nil)
+	rrModal := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrModal, reqModal)
+
+	if rrModal.Code != http.StatusOK {
+		t.Fatalf("GET /routers/Router-Test/backups failed with code %d", rrModal.Code)
+	}
+	bodyEmpty := rrModal.Body.String()
+	if !strings.Contains(bodyEmpty, "Бэкапы для этого устройства еще не создавались") {
+		t.Errorf("expected empty state message in backups modal, got:\n%s", bodyEmpty)
+	}
+
+	// 2. Place sample backup files
+	rscDir := cfg.ExportDir
+	binDir := filepath.Join(cfg.BinaryBackupDir, "Router-Test")
+	_ = os.MkdirAll(rscDir, 0o755)
+	_ = os.MkdirAll(binDir, 0o755)
+
+	rscContent := []byte("/system identity set name=Test\n")
+	_ = os.WriteFile(filepath.Join(rscDir, "Router-Test.rsc"), rscContent, 0o644)
+
+	binContent := []byte("binary-backup-sample-data")
+	binFile := filepath.Join(binDir, "Router-Test_2026-11-18_12-00-00.backup")
+	_ = os.WriteFile(binFile, binContent, 0o644)
+
+	// 3. Request modal again
+	rrModal2 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrModal2, reqModal)
+	if rrModal2.Code != http.StatusOK {
+		t.Fatalf("GET /routers/Router-Test/backups failed with code %d", rrModal2.Code)
+	}
+	bodyFiles := rrModal2.Body.String()
+	if !strings.Contains(bodyFiles, "Router-Test.rsc") {
+		t.Errorf("expected modal to list Router-Test.rsc")
+	}
+	if !strings.Contains(bodyFiles, "Router-Test_2026-11-18_12-00-00.backup") {
+		t.Errorf("expected modal to list binary backup file")
+	}
+
+	// 4. Download RSC
+	reqDlRsc := httptest.NewRequest(http.MethodGet, "/routers/Router-Test/backups/download?kind=export&file=Router-Test.rsc", nil)
+	rrDlRsc := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrDlRsc, reqDlRsc)
+
+	if rrDlRsc.Code != http.StatusOK {
+		t.Errorf("download RSC returned code %d, want 200", rrDlRsc.Code)
+	}
+	if disp := rrDlRsc.Header().Get("Content-Disposition"); !strings.Contains(disp, "attachment") || !strings.Contains(disp, "Router-Test.rsc") {
+		t.Errorf("expected attachment Content-Disposition header, got %q", disp)
+	}
+	if rrDlRsc.Body.String() != string(rscContent) {
+		t.Errorf("downloaded RSC content mismatch: got %q, want %q", rrDlRsc.Body.String(), string(rscContent))
+	}
+
+	// 5. Download Binary
+	relBinPath := "Router-Test/Router-Test_2026-11-18_12-00-00.backup"
+	reqDlBin := httptest.NewRequest(http.MethodGet, "/routers/Router-Test/backups/download?kind=binary&file="+relBinPath, nil)
+	rrDlBin := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrDlBin, reqDlBin)
+
+	if rrDlBin.Code != http.StatusOK {
+		t.Errorf("download binary returned code %d, want 200", rrDlBin.Code)
+	}
+	if rrDlBin.Body.String() != string(binContent) {
+		t.Errorf("downloaded binary content mismatch: got %q, want %q", rrDlBin.Body.String(), string(binContent))
+	}
+
+	// 6. Download Latest
+	reqLatest := httptest.NewRequest(http.MethodGet, "/routers/Router-Test/backups/latest?kind=binary", nil)
+	rrLatest := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrLatest, reqLatest)
+
+	if rrLatest.Code != http.StatusOK {
+		t.Errorf("download latest binary returned code %d, want 200", rrLatest.Code)
+	}
+	if rrLatest.Body.String() != string(binContent) {
+		t.Errorf("downloaded latest content mismatch")
+	}
+
+	// 7. Security: Path Traversal
+	reqAttack := httptest.NewRequest(http.MethodGet, "/routers/Router-Test/backups/download?kind=export&file=../../etc/passwd", nil)
+	rrAttack := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrAttack, reqAttack)
+
+	if rrAttack.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for path traversal attempt, got %d", rrAttack.Code)
+	}
+}
+

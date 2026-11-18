@@ -60,8 +60,9 @@
 
     <!-- Main Content: Device Table -->
     <div class="section-header">
-      <h2 class="section-title">Оборудование парка</h2>
-      <div>
+      <h2 class="section-title">Устройства</h2>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span id="filter-counter" class="filter-counter text-muted"></span>
         <button class="btn btn-sm btn-secondary"
                 hx-get="/routers/table"
                 hx-target="#routers-table-container"
@@ -71,6 +72,47 @@
       </div>
     </div>
 
+    <!-- Quick Filter Bar -->
+    <div class="filters-bar">
+      <div class="filter-group filter-search-group">
+        <span class="filter-icon">🔍</span>
+        <input type="text" id="filter-search" class="filter-input" placeholder="Поиск по имени или IP..." autocomplete="off">
+      </div>
+
+      <div class="filter-group">
+        <select id="filter-model" class="filter-select">
+          <option value="">Все модели</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <select id="filter-version" class="filter-select">
+          <option value="">Все версии ROS</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <select id="filter-status" class="filter-select">
+          <option value="">Все статусы</option>
+          <option value="success">Успешно</option>
+          <option value="error">Ошибка</option>
+          <option value="never">Не выполнялся</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <select id="filter-enabled" class="filter-select">
+          <option value="">Все состояния</option>
+          <option value="true">Включен</option>
+          <option value="false">Отключен</option>
+        </select>
+      </div>
+
+      <button id="filter-reset-btn" type="button" class="btn btn-sm btn-secondary" style="display: none;" title="Сбросить все фильтры">
+        ✕ Сбросить
+      </button>
+    </div>
+
     <div id="routers-table-container">
       {{template "table_container.html" .Table}}
     </div>
@@ -78,6 +120,146 @@
 
   <!-- Modal Container for Add/Edit Dialogs -->
   <div id="modal-container"></div>
+
+  <script>
+  (function() {
+    function getFilterValues() {
+      return {
+        search: (document.getElementById('filter-search')?.value || '').trim().toLowerCase(),
+        model: document.getElementById('filter-model')?.value || '',
+        version: document.getElementById('filter-version')?.value || '',
+        status: document.getElementById('filter-status')?.value || '',
+        enabled: document.getElementById('filter-enabled')?.value || ''
+      };
+    }
+
+    function updateDropdownOptions() {
+      var rows = document.querySelectorAll('#devices-table-body tr[data-name]');
+      var modelSelect = document.getElementById('filter-model');
+      var versionSelect = document.getElementById('filter-version');
+      if (!modelSelect || !versionSelect) return;
+
+      var curModel = modelSelect.value;
+      var curVersion = versionSelect.value;
+
+      var models = new Set();
+      var versions = new Set();
+
+      rows.forEach(function(row) {
+        var m = row.getAttribute('data-model');
+        if (m && m !== 'Unknown') models.add(m);
+        var v = row.getAttribute('data-version');
+        if (v && v !== 'Unknown') versions.add(v);
+      });
+
+      // Populate Models
+      modelSelect.innerHTML = '<option value="">Все модели</option>';
+      Array.from(models).sort().forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        if (m === curModel) opt.selected = true;
+        modelSelect.appendChild(opt);
+      });
+
+      // Populate Versions
+      versionSelect.innerHTML = '<option value="">Все версии ROS</option>';
+      Array.from(versions).sort().forEach(function(v) {
+        var opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = 'v' + v;
+        if (v === curVersion) opt.selected = true;
+        versionSelect.appendChild(opt);
+      });
+    }
+
+    function applyFilters() {
+      var f = getFilterValues();
+      var rows = document.querySelectorAll('#devices-table-body tr[data-name]');
+      var visibleCount = 0;
+      var totalCount = rows.length;
+
+      var hasActiveFilter = Boolean(f.search || f.model || f.version || f.status || f.enabled);
+      var resetBtn = document.getElementById('filter-reset-btn');
+      if (resetBtn) {
+        resetBtn.style.display = hasActiveFilter ? 'inline-flex' : 'none';
+      }
+
+      rows.forEach(function(row) {
+        var name = (row.getAttribute('data-name') || '').toLowerCase();
+        var host = (row.getAttribute('data-host') || '').toLowerCase();
+        var model = row.getAttribute('data-model') || '';
+        var version = row.getAttribute('data-version') || '';
+        var status = row.getAttribute('data-status') || '';
+        var enabled = row.getAttribute('data-enabled') || '';
+
+        var matchSearch = !f.search || name.includes(f.search) || host.includes(f.search);
+        var matchModel = !f.model || model === f.model;
+        var matchVersion = !f.version || version === f.version;
+        var matchStatus = !f.status || status === f.status;
+        var matchEnabled = !f.enabled || enabled === f.enabled;
+
+        if (matchSearch && matchModel && matchVersion && matchStatus && matchEnabled) {
+          row.style.display = '';
+          visibleCount++;
+        } else {
+          row.style.display = 'none';
+        }
+      });
+
+      var emptyFilterRow = document.getElementById('no-matching-filter-row');
+      if (emptyFilterRow) {
+        emptyFilterRow.style.display = (totalCount > 0 && visibleCount === 0) ? '' : 'none';
+      }
+
+      var counter = document.getElementById('filter-counter');
+      if (counter) {
+        if (hasActiveFilter && totalCount > 0) {
+          counter.textContent = 'Показано: ' + visibleCount + ' из ' + totalCount;
+          counter.style.display = 'inline-block';
+        } else {
+          counter.textContent = '';
+          counter.style.display = 'none';
+        }
+      }
+    }
+
+    function resetFilters() {
+      var s = document.getElementById('filter-search'); if (s) s.value = '';
+      var m = document.getElementById('filter-model'); if (m) m.value = '';
+      var v = document.getElementById('filter-version'); if (v) v.value = '';
+      var st = document.getElementById('filter-status'); if (st) st.value = '';
+      var en = document.getElementById('filter-enabled'); if (en) en.value = '';
+      applyFilters();
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      updateDropdownOptions();
+      applyFilters();
+
+      var inputs = ['filter-search', 'filter-model', 'filter-version', 'filter-status', 'filter-enabled'];
+      inputs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('input', applyFilters);
+          el.addEventListener('change', applyFilters);
+        }
+      });
+
+      var resetBtn = document.getElementById('filter-reset-btn');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', resetFilters);
+      }
+    });
+
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+      if (evt.detail.target && (evt.detail.target.id === 'routers-table-container' || evt.detail.target.id.startsWith('router-row-'))) {
+        updateDropdownOptions();
+        applyFilters();
+      }
+    });
+  })();
+  </script>
 
 </body>
 </html>

@@ -1,0 +1,13 @@
+{
+  "name": "context-sync",
+  "description": "Синхронизация и актуализация Memory Bank (.agents/memory-bank) на основе текущего состояния репозитория",
+  "args": {
+    "type": "object",
+    "properties": {
+      "note": {
+        "type": "string",
+        "description": "Краткая заметка или описание выполненной задачи для добавления в activeContext.md"
+      }
+    }
+  }
+}

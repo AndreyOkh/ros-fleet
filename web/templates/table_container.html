@@ -1,25 +1,30 @@
 <div class="card-table">
   <div class="table-responsive">
-    <table>
+    <table class="devices-table">
       <thead>
         <tr>
-          <th style="width: 60px;">Бэкап</th>
-          <th>Устройство</th>
-          <th>Оборудование и ОС</th>
-          <th>Состояние бэкапа</th>
-          <th style="text-align: right; width: 230px;">Действия</th>
+          <th style="width: 50px;">Бэкап</th>
+          <th style="width: 25%;">Устройство</th>
+          <th style="width: 20%;">Оборудование и ОС</th>
+          <th style="width: 22%;">Состояние бэкапа</th>
+          <th style="text-align: right; width: 295px;">Действия</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="devices-table-body">
         {{range .Items}}
           {{template "table_row.html" .}}
         {{else}}
-          <tr>
+          <tr class="empty-row">
             <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 32px;">
               Устройства не найдены. Добавьте ваш первый MikroTik роутер!
             </td>
           </tr>
         {{end}}
+        <tr id="no-matching-filter-row" style="display: none;">
+          <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 32px;">
+            🔍 Ничего не найдено по заданным критериям фильтрации
+          </td>
+        </tr>
       </tbody>
     </table>
   </div>

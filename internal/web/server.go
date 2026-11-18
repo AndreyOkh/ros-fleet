@@ -15,6 +15,7 @@ import (
 	"github.com/AndreyOkh/ros-fleet/internal/runner"
 	"github.com/AndreyOkh/ros-fleet/internal/scheduler"
 	"github.com/AndreyOkh/ros-fleet/internal/state"
+	"github.com/AndreyOkh/ros-fleet/internal/storage"
 	"github.com/AndreyOkh/ros-fleet/web"
 )
 
@@ -69,6 +70,14 @@ type ModalData struct {
 // DefaultsModalData is passed to the defaults modal template.
 type DefaultsModalData struct {
 	Defaults config.DefaultsConfig
+}
+
+// BackupsModalData is passed to the backups list modal template.
+type BackupsModalData struct {
+	Router   config.RouterConfig
+	RSC      *storage.BackupFileInfo
+	Binaries []storage.BackupFileInfo
+	HasFiles bool
 }
 
 // NewServer initializes the HTTP server, parses templates, and registers routes.
@@ -135,6 +144,11 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 	mux.HandleFunc("POST /routers/{name}/backup", s.handleBackupSingle)
 	mux.HandleFunc("POST /routers/{name}/refresh", s.handleRefreshSingle)
 	mux.HandleFunc("DELETE /routers/{name}", s.handleDeleteRouter)
+
+	// Router backup files inspection and download routes
+	mux.HandleFunc("GET /routers/{name}/backups", s.handleRouterBackupsModal)
+	mux.HandleFunc("GET /routers/{name}/backups/download", s.handleDownloadBackup)
+	mux.HandleFunc("GET /routers/{name}/backups/latest", s.handleDownloadLatestBackup)
 
 	// Bulk backup route
 	mux.HandleFunc("POST /backup/all", s.handleBackupAll)
@@ -495,4 +509,123 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func (s *Server) getStorage() *storage.Storage {
+	cfg := s.cfgMgr.Get()
+	return storage.New(cfg.BinaryBackupDir, cfg.ExportDir)
+}
+
+func (s *Server) handleRouterBackupsModal(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	rc, found := s.cfgMgr.GetRouter(name)
+	if !found {
+		http.Error(w, "Router not found", http.StatusNotFound)
+		return
+	}
+
+	stor := s.getStorage()
+	backups, err := stor.ListRouterBackups(name)
+	if err != nil {
+		s.logger.Error("Failed to list router backups", slog.String("router", name), slog.Any("error", err))
+		http.Error(w, "Failed to read backups", http.StatusInternalServerError)
+		return
+	}
+
+	var rsc *storage.BackupFileInfo
+	var binaries []storage.BackupFileInfo
+
+	for _, b := range backups {
+		if b.Type == "rsc" && rsc == nil {
+			rscCopy := b
+			rsc = &rscCopy
+		} else if b.Type == "backup" {
+			binaries = append(binaries, b)
+		}
+	}
+
+	data := BackupsModalData{
+		Router:   rc,
+		RSC:      rsc,
+		Binaries: binaries,
+		HasFiles: len(backups) > 0,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "backups_modal.html", data); err != nil {
+		s.logger.Error("Template render error (backups_modal.html)", slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleDownloadBackup(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if _, found := s.cfgMgr.GetRouter(name); !found {
+		http.Error(w, "Router not found", http.StatusNotFound)
+		return
+	}
+
+	kind := r.URL.Query().Get("kind")
+	relPath := r.URL.Query().Get("file")
+	if relPath == "" {
+		http.Error(w, "Missing file parameter", http.StatusBadRequest)
+		return
+	}
+
+	stor := s.getStorage()
+	fullPath, downloadName, err := stor.ResolveBackupFile(kind, name, relPath)
+	if err != nil {
+		s.logger.Warn("Backup file resolution rejected",
+			slog.String("router", name),
+			slog.String("kind", kind),
+			slog.String("file", relPath),
+			slog.Any("error", err),
+		)
+		http.Error(w, fmt.Sprintf("Forbidden or not found: %v", err), http.StatusForbidden)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", downloadName))
+	if strings.HasSuffix(downloadName, ".rsc") {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	http.ServeFile(w, r, fullPath)
+}
+
+func (s *Server) handleDownloadLatestBackup(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if _, found := s.cfgMgr.GetRouter(name); !found {
+		http.Error(w, "Router not found", http.StatusNotFound)
+		return
+	}
+
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		kind = "binary"
+	}
+
+	stor := s.getStorage()
+	latest, err := stor.LatestRouterBackup(name, kind)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("No %s backup found: %v", kind, err), http.StatusNotFound)
+		return
+	}
+
+	fullPath, downloadName, err := stor.ResolveBackupFile(kind, name, latest.RelPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to resolve backup: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", downloadName))
+	if strings.HasSuffix(downloadName, ".rsc") {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	http.ServeFile(w, r, fullPath)
 }

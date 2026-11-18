@@ -1,4 +1,10 @@
-<tr id="router-row-{{.Router.Name}}">
+<tr id="router-row-{{.Router.Name}}"
+    data-name="{{.Router.Name}}"
+    data-host="{{.Effective.Host}}"
+    data-model="{{.State.Model}}"
+    data-version="{{.State.Firmware}}"
+    data-status="{{if eq .State.Status "running"}}running{{else if eq .State.Status "success"}}success{{else if eq .State.Status "error"}}error{{else}}never{{end}}"
+    data-enabled="{{if .Router.IsEnabled}}true{{else}}false{{end}}">
   <!-- Вкл / Откл Toggle -->
   <td>
     <label class="switch" title="Включить/отключить бэкап">
@@ -12,9 +18,9 @@
   </td>
 
   <!-- Имя и адрес -->
-  <td>
+  <td class="col-device">
     <div class="device-name">
-      {{.Router.Name}}
+      <span class="device-title">{{.Router.Name}}</span>
       {{if not .Router.IsEnabled}}
         <span class="badge badge-neutral" style="font-size: 10px;">Отключен</span>
       {{end}}
@@ -23,41 +29,40 @@
   </td>
 
   <!-- Модель и версия RouterOS -->
-  <td>
-    <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+  <td class="col-hardware">
+    <div class="hardware-info">
       <span class="badge badge-model">{{.State.Model}}</span>
       <span class="badge badge-version">v{{.State.Firmware}}</span>
     </div>
   </td>
 
   <!-- Статус и время последнего бэкапа -->
-  <td>
-    {{if eq .State.Status "running"}}
-      <span class="badge badge-warning">
-        <span class="spinner"></span> Выполняется...
-      </span>
-    {{else if eq .State.Status "success"}}
-      <span class="badge badge-success">
-        ✓ Успешно
-      </span>
-      <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
-        {{if not .State.LastBackupAt.IsZero}}{{.State.LastBackupAt.Format "02.01 15:04:05"}}{{end}}
-        {{if gt .State.LastBackupRscSize 0}}• RSC: {{formatBytes .State.LastBackupRscSize}}{{end}}
+  <td class="col-status"
+      title="{{if eq .State.Status "success"}}Успешно сохранен ({{if not .State.LastBackupAt.IsZero}}{{.State.LastBackupAt.Format "02.01.2006 15:04:05"}}{{end}})&#10;• .backup: {{formatBytes .State.LastBackupBinSize}}&#10;• .rsc: {{formatBytes .State.LastBackupRscSize}}{{else if eq .State.Status "error"}}Ошибка: {{.State.LastError}}{{else if eq .State.Status "running"}}Выполняется резервное копирование...{{else}}Бэкап еще не выполнялся{{end}}">
+    <div class="status-cell-wrapper">
+      {{if eq .State.Status "running"}}
+        <span class="badge badge-warning">
+          <span class="spinner"></span> Выполняется...
+        </span>
+      {{else if eq .State.Status "success"}}
+        <span class="badge badge-success">
+          ✓ Успешно
+        </span>
+      {{else if eq .State.Status "error"}}
+        <span class="badge badge-danger">
+          ✕ Ошибка
+        </span>
+      {{else}}
+        <span class="badge badge-neutral">Ожидает</span>
+      {{end}}
+      <div class="status-time">
+        {{if not .State.LastBackupAt.IsZero}}{{.State.LastBackupAt.Format "02.01 15:04:05"}}{{else}}—{{end}}
       </div>
-    {{else if eq .State.Status "error"}}
-      <span class="badge badge-danger" data-tooltip="{{.State.LastError}}">
-        ✕ Ошибка
-      </span>
-      <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
-        {{if not .State.LastBackupAt.IsZero}}{{.State.LastBackupAt.Format "02.01 15:04:05"}}{{end}}
-      </div>
-    {{else}}
-      <span class="badge badge-neutral">Не запускался</span>
-    {{end}}
+    </div>
   </td>
 
   <!-- Действия -->
-  <td>
+  <td class="col-actions">
     <div class="actions-group">
       <button class="btn btn-sm btn-primary"
               hx-post="/routers/{{.Router.Name}}/backup"
@@ -73,6 +78,14 @@
               hx-swap="outerHTML"
               title="Опросить модель и версию RouterOS">
         <span>🔄</span> Инфо
+      </button>
+
+      <button class="btn btn-sm btn-secondary"
+              hx-get="/routers/{{.Router.Name}}/backups"
+              hx-target="#modal-container"
+              hx-swap="innerHTML"
+              title="Просмотр и скачивание резервных копий">
+        <span>💾</span> Бэкапы
       </button>
 
       <button class="btn btn-sm btn-secondary"

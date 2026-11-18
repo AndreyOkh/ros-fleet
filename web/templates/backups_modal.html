@@ -1,0 +1,119 @@
+<div class="modal-overlay" id="backups-modal">
+  <div class="modal-content" style="max-width: 680px;">
+    <div class="modal-header">
+      <h3 class="modal-title">
+        💾 Файлы бэкапов: <span style="color: var(--accent-color);">{{.Router.Name}}</span>
+      </h3>
+      <button class="close-btn" onclick="document.getElementById('modal-container').innerHTML = ''">&times;</button>
+    </div>
+
+    {{if not .HasFiles}}
+      <div style="text-align: center; padding: 36px 16px; color: var(--text-secondary);">
+        <div style="font-size: 36px; margin-bottom: 12px;">📂</div>
+        <p style="font-size: 15px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px;">
+          Бэкапы для этого устройства еще не создавались
+        </p>
+        <p style="font-size: 13px; color: var(--text-muted); max-width: 420px; margin: 0 auto 20px;">
+          Нажмите кнопку «Бэкап» в строке роутера или запустите резервное копирование парка, чтобы получить первую копию.
+        </p>
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML = ''">
+          Закрыть
+        </button>
+      </div>
+    {{else}}
+      <!-- Section 1: Latest RSC Export -->
+      <div class="backup-section" style="margin-bottom: 22px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <h4 style="font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
+            📄 Актуальная конфигурация (.rsc)
+          </h4>
+          <span style="font-size: 11px; color: var(--text-muted);">Экспорт без даты в заголовке (Git-версия)</span>
+        </div>
+
+        {{if .RSC}}
+          <div class="backup-card-rsc">
+            <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+              <span style="font-size: 26px;">📄</span>
+              <div style="min-width: 0;">
+                <div style="font-weight: 600; color: var(--text-primary); font-family: monospace; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  {{.RSC.FileName}}
+                </div>
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
+                  Обновлен: <strong>{{.RSC.ModTime.Format "02.01.2006 15:04:05"}}</strong> • Размер: <strong>{{.RSC.Size}}</strong>
+                </div>
+              </div>
+            </div>
+            <a href="/routers/{{.Router.Name}}/backups/download?kind=export&file={{.RSC.RelPath}}"
+               class="btn btn-sm btn-primary"
+               download
+               title="Скачать текстовый экспорт конфигурации">
+              <span>⬇️</span> Скачать .rsc
+            </a>
+          </div>
+        {{else}}
+          <div style="padding: 12px; background: var(--bg-color); border: 1px dashed var(--border-color); border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);">
+            Текстовый экспорт (.rsc) еще не создан.
+          </div>
+        {{end}}
+      </div>
+
+      <!-- Section 2: Binary Backups -->
+      <div class="backup-section">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <h4 style="font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
+            📦 Бинарные бэкапы (.backup)
+          </h4>
+          <span style="font-size: 11px; color: var(--text-muted);">Хранятся согласно retention_days</span>
+        </div>
+
+        {{if .Binaries}}
+          <div class="table-responsive" style="max-height: 280px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <thead>
+                <tr style="position: sticky; top: 0; background: var(--surface-color); z-index: 2;">
+                  <th style="padding: 10px 12px; font-weight: 600;">Файл бэкапа</th>
+                  <th style="padding: 10px 12px; font-weight: 600; width: 160px;">Дата создания</th>
+                  <th style="padding: 10px 12px; font-weight: 600; width: 90px;">Размер</th>
+                  <th style="padding: 10px 12px; font-weight: 600; width: 105px; text-align: right;">Действие</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{range .Binaries}}
+                  <tr>
+                    <td style="padding: 8px 12px; font-family: monospace; font-size: 12px; word-break: break-all;">
+                      {{.FileName}}
+                    </td>
+                    <td style="padding: 8px 12px; color: var(--text-secondary); white-space: nowrap;">
+                      {{.ModTime.Format "02.01.2006 15:04"}}
+                    </td>
+                    <td style="padding: 8px 12px; font-weight: 500; white-space: nowrap;">
+                      {{.Size}}
+                    </td>
+                    <td style="padding: 8px 12px; text-align: right;">
+                      <a href="/routers/{{$.Router.Name}}/backups/download?kind=binary&file={{.RelPath}}"
+                         class="btn btn-sm btn-secondary"
+                         download
+                         title="Скачать бинарный файл .backup">
+                        <span>⬇️</span> Скачать
+                      </a>
+                    </td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
+        {{else}}
+          <div style="padding: 12px; background: var(--bg-color); border: 1px dashed var(--border-color); border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);">
+            Бинарные бэкапы (.backup) для этого устройства отсутствуют.
+          </div>
+        {{end}}
+      </div>
+
+      <div class="form-actions" style="margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML = ''">
+          Закрыть
+        </button>
+      </div>
+    {{end}}
+  </div>
+</div>

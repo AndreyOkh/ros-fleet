@@ -116,3 +116,57 @@ func TestRouterConfigEffectiveOverrides(t *testing.T) {
 		t.Errorf("expected override ExportSensitive true, got false")
 	}
 }
+
+func TestRouterConfigCloneAndDeepCopy(t *testing.T) {
+	enabled := true
+	ignoreKey := false
+	sensitive := true
+	encrypt := false
+
+	original := RouterConfig{
+		Enabled:               &enabled,
+		Name:                  "Router1",
+		Host:                  "192.168.1.1",
+		InsecureIgnoreHostKey: &ignoreKey,
+		ExportSensitive:       &sensitive,
+		EncryptBackup:         &encrypt,
+	}
+
+	cloned := original.Clone()
+
+	// Modifying cloned pointers must not alter original
+	*cloned.Enabled = false
+	*cloned.InsecureIgnoreHostKey = true
+	*cloned.ExportSensitive = false
+	*cloned.EncryptBackup = true
+
+	if *original.Enabled != true {
+		t.Errorf("original Enabled was mutated: got %v", *original.Enabled)
+	}
+	if *original.InsecureIgnoreHostKey != false {
+		t.Errorf("original InsecureIgnoreHostKey was mutated: got %v", *original.InsecureIgnoreHostKey)
+	}
+	if *original.ExportSensitive != true {
+		t.Errorf("original ExportSensitive was mutated: got %v", *original.ExportSensitive)
+	}
+	if *original.EncryptBackup != false {
+		t.Errorf("original EncryptBackup was mutated: got %v", *original.EncryptBackup)
+	}
+}
+
+func TestActualConfigFile(t *testing.T) {
+	if _, err := os.Stat("../../config.json"); os.IsNotExist(err) {
+		t.Skip("config.json not present, skipping test")
+	}
+
+	cfg, err := Load("../../config.json")
+	if err != nil {
+		t.Fatalf("failed to load actual config.json: %v", err)
+	}
+
+	if len(cfg.Routers) == 0 {
+		t.Fatalf("expected routers in config.json, got 0")
+	}
+	t.Logf("Successfully loaded and validated config.json with %d routers", len(cfg.Routers))
+}
+

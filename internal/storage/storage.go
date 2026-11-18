@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -22,6 +23,16 @@ type DestinationPaths struct {
 	BaseFilename    string
 	LocalRscPath    string
 	LocalBackupPath string
+}
+
+// BackupFileInfo represents metadata for a stored backup file (.backup or .rsc).
+type BackupFileInfo struct {
+	Type      string    `json:"type"`       // "rsc" or "backup"
+	FileName  string    `json:"file_name"`  // Base filename (e.g. "Router-1.rsc" or "Router-1_2026-11-18_10-00-00.backup")
+	RelPath   string    `json:"rel_path"`   // Relative path from base directory for download
+	Size      string    `json:"size"`       // Formatted size e.g. "1.4 MB"
+	SizeBytes int64     `json:"size_bytes"` // Raw byte size
+	ModTime   time.Time `json:"mod_time"`   // Creation/modification timestamp
 }
 
 // Storage manages local binary backups and export paths.
@@ -48,11 +59,12 @@ func (s *Storage) ExportDir() string {
 	return s.exportDir
 }
 
-// SanitizeName cleans a router name to make it safe for filesystem usage.
+// SanitizeName cleans a router name to make it safe for filesystem usage,
+// preventing path traversal attacks and illegal filesystem characters.
 func SanitizeName(name string) string {
 	cleaned := illegalChars.ReplaceAllString(name, "_")
 	cleaned = strings.Trim(cleaned, "._-")
-	if cleaned == "" {
+	if cleaned == "" || cleaned == "." || cleaned == ".." {
 		cleaned = "unnamed_router"
 	}
 	return cleaned
@@ -66,16 +78,26 @@ func (s *Storage) PrepareDestination(routerName string, t time.Time) (Destinatio
 
 	// Binary backup goes to binaryDir (with timestamp in router subfolder)
 	routerBinaryDir := filepath.Join(s.binaryDir, safeRouterName)
+	relBinary, err := filepath.Rel(s.binaryDir, routerBinaryDir)
+	if err != nil || strings.HasPrefix(relBinary, "..") {
+		return DestinationPaths{}, fmt.Errorf("path traversal attempt detected for binary backup directory: %q", routerName)
+	}
+
 	if err := os.MkdirAll(routerBinaryDir, 0o755); err != nil {
 		return DestinationPaths{}, fmt.Errorf("failed to create router binary directory %q: %w", routerBinaryDir, err)
 	}
 	localBackupPath := filepath.Join(routerBinaryDir, baseFilename+".backup")
 
 	// RSC export goes to exportDir (latest version with fixed name: <router_name>.rsc)
+	localRscPath := filepath.Join(s.exportDir, safeRouterName+".rsc")
+	relRsc, err := filepath.Rel(s.exportDir, localRscPath)
+	if err != nil || strings.HasPrefix(relRsc, "..") {
+		return DestinationPaths{}, fmt.Errorf("path traversal attempt detected for export path: %q", routerName)
+	}
+
 	if err := os.MkdirAll(s.exportDir, 0o755); err != nil {
 		return DestinationPaths{}, fmt.Errorf("failed to create export directory %q: %w", s.exportDir, err)
 	}
-	localRscPath := filepath.Join(s.exportDir, safeRouterName+".rsc")
 
 	return DestinationPaths{
 		BaseFilename:    baseFilename,
@@ -274,4 +296,168 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// ListRouterBackups scans exportDir and binaryDir for all backup files belonging to the router.
+func (s *Storage) ListRouterBackups(routerName string) ([]BackupFileInfo, error) {
+	safeName := SanitizeName(routerName)
+	var results []BackupFileInfo
+
+	// 1. Check for latest .rsc export in exportDir
+	rscPath := filepath.Join(s.exportDir, safeName+".rsc")
+	if info, err := os.Stat(rscPath); err == nil && !info.IsDir() {
+		results = append(results, BackupFileInfo{
+			Type:      "rsc",
+			FileName:  info.Name(),
+			RelPath:   info.Name(),
+			Size:      formatBytes(info.Size()),
+			SizeBytes: info.Size(),
+			ModTime:   info.ModTime(),
+		})
+	}
+
+	// 2. Check for binary backups in binaryDir
+	var binaries []BackupFileInfo
+
+	// Check router subfolder: binaryDir/<safeName>/
+	routerSubDir := filepath.Join(s.binaryDir, safeName)
+	if dirInfo, err := os.Stat(routerSubDir); err == nil && dirInfo.IsDir() {
+		_ = filepath.WalkDir(routerSubDir, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil || d.IsDir() {
+				return nil
+			}
+			if filepath.Ext(d.Name()) == ".backup" && strings.HasPrefix(d.Name(), safeName) {
+				if fi, err := d.Info(); err == nil && fi.Size() > 0 {
+					rel, relErr := filepath.Rel(s.binaryDir, path)
+					if relErr == nil {
+						binaries = append(binaries, BackupFileInfo{
+							Type:      "backup",
+							FileName:  d.Name(),
+							RelPath:   rel,
+							Size:      formatBytes(fi.Size()),
+							SizeBytes: fi.Size(),
+							ModTime:   fi.ModTime(),
+						})
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	// Also check directly inside binaryDir for flat legacy files: binaryDir/<safeName>_*.backup
+	if entries, err := os.ReadDir(s.binaryDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && filepath.Ext(entry.Name()) == ".backup" && strings.HasPrefix(entry.Name(), safeName) {
+				alreadyAdded := false
+				for _, b := range binaries {
+					if b.FileName == entry.Name() {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					if fi, err := entry.Info(); err == nil && fi.Size() > 0 {
+						binaries = append(binaries, BackupFileInfo{
+							Type:      "backup",
+							FileName:  entry.Name(),
+							RelPath:   entry.Name(),
+							Size:      formatBytes(fi.Size()),
+							SizeBytes: fi.Size(),
+							ModTime:   fi.ModTime(),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Sort binary backups from newest to oldest
+	sort.Slice(binaries, func(i, j int) bool {
+		return binaries[i].ModTime.After(binaries[j].ModTime)
+	})
+
+	results = append(results, binaries...)
+	return results, nil
+}
+
+// ResolveBackupFile safely resolves and validates the path to a requested backup file.
+// It strictly prevents path traversal and verifies that the file belongs to the given router.
+func (s *Storage) ResolveBackupFile(kind string, routerName string, relPath string) (string, string, error) {
+	safeName := SanitizeName(routerName)
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != "binary" && kind != "export" {
+		return "", "", fmt.Errorf("invalid backup kind %q: must be 'binary' or 'export'", kind)
+	}
+
+	cleanRel := filepath.Clean(strings.TrimSpace(relPath))
+	if cleanRel == "" || cleanRel == "." || strings.HasPrefix(cleanRel, "..") || filepath.IsAbs(cleanRel) {
+		return "", "", errors.New("invalid backup path: path traversal detected")
+	}
+
+	var baseDir string
+	var expectedExt string
+	if kind == "export" {
+		baseDir = s.exportDir
+		expectedExt = ".rsc"
+	} else {
+		baseDir = s.binaryDir
+		expectedExt = ".backup"
+	}
+
+	targetPath := filepath.Join(baseDir, cleanRel)
+	targetPath = filepath.Clean(targetPath)
+
+	// Strict boundary check: targetPath must be within baseDir
+	rel, err := filepath.Rel(baseDir, targetPath)
+	if err != nil || strings.HasPrefix(rel, "..") || rel == "." {
+		return "", "", errors.New("security error: path traversal outside backup root")
+	}
+
+	baseFileName := filepath.Base(targetPath)
+	if filepath.Ext(baseFileName) != expectedExt {
+		return "", "", fmt.Errorf("security error: file extension must be %s", expectedExt)
+	}
+
+	// Verify file belongs to the specified router
+	if kind == "export" {
+		if baseFileName != safeName+".rsc" {
+			return "", "", fmt.Errorf("security error: export file %q does not match router %q", baseFileName, routerName)
+		}
+	} else {
+		if !strings.HasPrefix(baseFileName, safeName) {
+			return "", "", fmt.Errorf("security error: binary backup %q does not match router %q", baseFileName, routerName)
+		}
+	}
+
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return "", "", fmt.Errorf("backup file not found: %w", err)
+	}
+	if info.IsDir() {
+		return "", "", errors.New("security error: target path is a directory")
+	}
+
+	return targetPath, baseFileName, nil
+}
+
+// LatestRouterBackup finds the most recent backup of the specified kind for a router.
+func (s *Storage) LatestRouterBackup(routerName string, kind string) (BackupFileInfo, error) {
+	backups, err := s.ListRouterBackups(routerName)
+	if err != nil {
+		return BackupFileInfo{}, err
+	}
+
+	targetType := "backup"
+	if strings.ToLower(strings.TrimSpace(kind)) == "export" {
+		targetType = "rsc"
+	}
+
+	for _, b := range backups {
+		if b.Type == targetType {
+			return b, nil
+		}
+	}
+
+	return BackupFileInfo{}, fmt.Errorf("no %s backup found for router %q", kind, routerName)
 }
