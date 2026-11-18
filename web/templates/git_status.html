@@ -11,38 +11,20 @@
     {{else}}
       <span class="git-time">нет коммитов</span>
     {{end}}
-    {{if .AutoPush}}
-      {{if .LastError}}
-        <span class="git-push-pill git-push-err"
-              title="{{.LastError}} (нажмите, чтобы повторить push)"
+    {{if or .AutoPush .RemoteURL}}
+      <button type="button"
+              class="git-push-btn {{if .LastError}}push-error{{else if not .LastPushAt.IsZero}}push-ok{{else}}push-idle{{end}}"
               hx-post="/dashboard/git-push"
               hx-target="#git-status-container"
               hx-swap="innerHTML"
-              style="cursor: pointer;">⚠️ push error</span>
-      {{else if not .LastPushAt.IsZero}}
-        <span class="git-push-pill git-push-ok"
-              title="Push: {{.LastPushFormatted}} (нажмите, чтобы отправить сейчас)"
-              hx-post="/dashboard/git-push"
-              hx-target="#git-status-container"
-              hx-swap="innerHTML"
-              style="cursor: pointer;">⬆️ push ok</span>
-      {{else}}
-        <span class="git-push-pill git-push-idle"
-              title="Нажмите, чтобы выполнить git push сейчас"
-              hx-post="/dashboard/git-push"
-              hx-target="#git-status-container"
-              hx-swap="innerHTML"
-              style="cursor: pointer;">⬆️ auto push</span>
-      {{end}}
-    {{else if .RemoteURL}}
-      <span class="git-push-pill git-push-idle"
-            title="Удаленный репозиторий настроен. Нажмите, чтобы выполнить git push"
-            hx-post="/dashboard/git-push"
-            hx-target="#git-status-container"
-            hx-swap="innerHTML"
-            style="cursor: pointer;">⬆️ push</span>
+              hx-indicator="#git-push-indicator"
+              title="{{if .LastError}}Ошибка отправки: {{.LastError}} (нажмите, чтобы повторить){{else if not .LastPushAt.IsZero}}Отправлено: {{.LastPushFormatted}} (нажмите для повторной отправки){{else}}Нажмите для отправки изменений в Git{{end}}">
+        <span class="git-push-spinner htmx-indicator" id="git-push-indicator"></span>
+        <span class="git-push-icon">{{if .LastError}}⚠️{{else}}⬆️{{end}}</span>
+        <span class="git-push-text">{{if .LastError}}Push error{{else if not .LastPushAt.IsZero}}Push ok{{else}}Push{{end}}</span>
+      </button>
     {{else}}
-      <span class="git-push-pill git-push-local" title="Локальный Git репозиторий">💾 local</span>
+      <span class="git-pill-local" title="Локальный Git репозиторий (remote_url не задан)">💾 local</span>
     {{end}}
   {{end}}
 </div>

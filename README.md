@@ -5,7 +5,7 @@
 [![Front-end](https://img.shields.io/badge/UI-HTMX%20%2B%20Vanilla%20CSS-blue?style=flat)](https://htmx.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Высокопроизводительная, надежная система централизованного управления парком сетевого оборудования **MikroTik RouterOS (v6 и v7)**, автоматического резервного копирования и версионирования конфигураций в Git на **Go 1.27** с использованием стандартного пакета **`encoding/json/v2`**.
+Высокопроизводительная, надежная система резервного копирования и централизованного управления сетевым оборудованием **MikroTik RouterOS (v6 и v7)**, автоматического версионирования конфигураций в Git на **Go 1.27** с использованием стандартного пакета **`encoding/json/v2`**.
 
 Модуль: `github.com/AndreyOkh/ros-fleet`
 
@@ -249,7 +249,7 @@ services:
 | `web.auth_user` | string | `""` | Логин для Basic Auth (если пусто — вход без пароля) |
 | `web.auth_password` | string | `""` | Пароль для Basic Auth |
 | `telegram.enabled` | bool | `false` | Включить отправку отчетов в Telegram |
-| `routers[].enabled` | bool | `true` | Флаг активности устройства в парке |
+| `routers[].enabled` | bool | `true` | Флаг активности резервного копирования устройства |
 | `routers[].name` | string | — | Уникальное имя устройства |
 | `routers[].host` | string | — | IP-адрес или DNS-имя роутера |
 

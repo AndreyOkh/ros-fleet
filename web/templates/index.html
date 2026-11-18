@@ -16,7 +16,7 @@
         <div class="brand-icon">📡</div>
         <div>
           <h1 class="brand-title">ros-fleet</h1>
-          <p class="brand-subtitle">Централизованное управление парком и бэкапами MikroTik RouterOS</p>
+          <p class="brand-subtitle">Централизованное управление и бэкап MikroTik RouterOS</p>
         </div>
       </div>
 
@@ -36,15 +36,17 @@
         <button class="btn btn-secondary"
                 hx-get="/routers/new"
                 hx-target="#modal-container"
-                hx-swap="innerHTML">
-          <span>➕</span> Добавить роутер
+                hx-swap="innerHTML"
+                title="Добавить новое устройство">
+          <span>➕</span> Добавить устройство
         </button>
 
         <button class="btn btn-primary"
                 hx-post="/backup/all"
                 hx-target="#routers-table-container"
                 hx-swap="innerHTML"
-                hx-indicator="#global-backup-indicator">
+                hx-indicator="#global-backup-indicator"
+                title="Запустить резервное копирование всех активных устройств">
           <span>⚡</span> Запустить бэкап всех
           <span class="htmx-indicator" id="global-backup-indicator">
             <span class="spinner"></span>

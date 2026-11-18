@@ -2,7 +2,7 @@
   <div class="modal-content" style="max-width: 620px;">
     <div class="modal-header">
       <h3 class="modal-title">
-        {{if .IsEdit}}Редактировать устройство {{.Router.Name}}{{else}}Добавить устройство в парк{{end}}
+        {{if .IsEdit}}Редактировать устройство {{.Router.Name}}{{else}}Добавить новое устройство{{end}}
       </h3>
       <button class="close-btn" onclick="document.getElementById('modal-container').innerHTML = ''">&times;</button>
     </div>
@@ -140,7 +140,7 @@
            style="margin-top: 14px; display: {{if or (eq $encryptState "true") (and (eq $encryptState "inherit") .Defaults.EncryptBackup)}}block{{else}}none{{end}};">
         <label for="backup_password">Пароль шифрования бэкапа</label>
         <input type="password" id="backup_password" name="backup_password" value="{{.Router.BackupPassword}}"
-               placeholder="Стойкий пароль шифрования">
+               placeholder="Пароль для шифрования .backup">
         <small class="form-hint text-muted">По умолчанию: {{if .Defaults.BackupPassword}}•••••••• (задан в defaults){{else}}не задан{{end}}</small>
       </div>
 
