@@ -264,7 +264,9 @@
           } else if (type === 'enabled') {
             val = (val === 'true') ? 'Включен' : 'Отключен';
           } else if (type === 'versions') {
-            val = 'v' + val;
+            val = (val === 'Unknown' || !val) ? 'Не определена' : (val.startsWith('v') ? val : 'v' + val);
+          } else if (type === 'models') {
+            val = (val === 'Unknown' || !val) ? 'Не определена' : val;
           }
           if (valSpan) valSpan.textContent = val;
         } else {
@@ -326,11 +328,11 @@
       var enabled = new Map([['true', 0], ['false', 0]]);
 
       rows.forEach(function(row) {
-        var m = row.getAttribute('data-model');
-        if (m && m !== 'Unknown') models.set(m, (models.get(m) || 0) + 1);
+        var m = row.getAttribute('data-model') || 'Unknown';
+        models.set(m, (models.get(m) || 0) + 1);
 
-        var v = row.getAttribute('data-version');
-        if (v && v !== 'Unknown') versions.set(v, (versions.get(v) || 0) + 1);
+        var v = row.getAttribute('data-version') || 'Unknown';
+        versions.set(v, (versions.get(v) || 0) + 1);
 
         var s = row.getAttribute('data-status') || 'never';
         if (statuses.has(s)) statuses.set(s, statuses.get(s) + 1);
@@ -339,8 +341,12 @@
         if (enabled.has(en)) enabled.set(en, enabled.get(en) + 1);
       });
 
-      renderOptionsList(document.getElementById('ms-list-models'), models, 'models');
-      renderOptionsList(document.getElementById('ms-list-versions'), versions, 'versions', function(v) { return 'v' + v; });
+      renderOptionsList(document.getElementById('ms-list-models'), models, 'models', function(m) {
+        return (m === 'Unknown' || !m) ? 'Не определена' : m;
+      });
+      renderOptionsList(document.getElementById('ms-list-versions'), versions, 'versions', function(v) {
+        return (v === 'Unknown' || !v) ? 'Не определена' : (v.startsWith('v') ? v : 'v' + v);
+      });
       renderOptionsList(document.getElementById('ms-list-statuses'), statuses, 'statuses', function(s) {
         var m = { success: 'Успешно ✅', error: 'Ошибка ❌', never: 'Не выполнялся ⚪', running: 'Выполняется ⏳' };
         return m[s] || s;
@@ -357,17 +363,8 @@
 
     function applyFilters() {
       var rows = document.querySelectorAll('#devices-table-body tr[data-name]');
-      var container = document.getElementById('routers-table-container');
       var q = (filterState.search || '').trim().toLowerCase();
       var hasFilter = Boolean(q || filterState.models.size > 0 || filterState.versions.size > 0 || filterState.statuses.size > 0 || filterState.enabled.size > 0);
-
-      if (container) {
-        if (hasFilter) {
-          container.classList.add('is-filtered');
-        } else {
-          container.classList.remove('is-filtered');
-        }
-      }
 
       var resetBtn = document.getElementById('filter-reset-btn');
       if (resetBtn) {
@@ -380,10 +377,10 @@
       rows.forEach(function(row) {
         var name = (row.getAttribute('data-name') || '').toLowerCase();
         var host = (row.getAttribute('data-host') || '').toLowerCase();
-        var model = row.getAttribute('data-model') || '';
-        var version = row.getAttribute('data-version') || '';
-        var status = row.getAttribute('data-status') || '';
-        var en = row.getAttribute('data-enabled') || '';
+        var model = row.getAttribute('data-model') || 'Unknown';
+        var version = row.getAttribute('data-version') || 'Unknown';
+        var status = row.getAttribute('data-status') || 'never';
+        var en = row.getAttribute('data-enabled') || 'false';
 
         var matchSearch = !q || name.includes(q) || host.includes(q);
         var matchModel = filterState.models.size === 0 || filterState.models.has(model);

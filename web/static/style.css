@@ -865,10 +865,6 @@ input[type="text"].filter-input {
 }
 
 /* Prevent layout jump and flicker during filtering */
-#routers-table-container.is-filtered tr[data-name] {
-  display: none;
-}
-
 #routers-table-container {
   transition: opacity 0.15s ease;
 }
