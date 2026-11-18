@@ -67,3 +67,21 @@ func TestStateManagerPersistence(t *testing.T) {
 		t.Errorf("unexpected sizes: %d, %d", st2.LastBackupRscSize, st2.LastBackupBinSize)
 	}
 }
+
+func TestStateWriteDirect(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "direct_state.json")
+	data := []byte(`{"device": "ok"}` + "\n")
+
+	if err := writeDirect(filePath, data); err != nil {
+		t.Fatalf("writeDirect failed: %v", err)
+	}
+
+	read, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed reading direct file: %v", err)
+	}
+	if string(read) != string(data) {
+		t.Errorf("got %q, want %q", string(read), string(data))
+	}
+}

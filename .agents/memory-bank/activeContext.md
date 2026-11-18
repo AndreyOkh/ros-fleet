@@ -2,6 +2,9 @@
 
 ## Current Status & Focus
 - **Последние изменения в проекте:**
+  - **Исправление ошибки записи файлов при монтировании в Docker (EBUSY / "device or resource busy"):**
+    - Выявлена причина ошибки при переключении активности роутера или сохранении настроек в Docker: при bind-mount одного файла (`./config.json:/app/config.json:rw`, `./state.json:/app/state.json:rw`) целевой файл в Linux является точкой монтирования, из-за чего системный вызов `rename()` возвращает `EBUSY`.
+    - В `internal/config`, `internal/state` и `internal/storage` реализован умный фолбэк: при ошибке `rename()` данные открываются через прямой дескриптор с `O_TRUNC` и сбрасываются на хост через `fsync`, гарантируя корректное сохранение файлов как в обычном окружении, так и внутри контейнеров Docker.
   - **Отправка изменений в Git через Access Token:**
     - В `config.GitConfig` добавлено поле `access_token` (с поддержкой переменных окружения `GIT_ACCESS_TOKEN` и `ROS_FLEET_GIT_TOKEN`).
     - В `internal/gitrepo` реализованы функции `BuildEffectiveRemoteURL`, `SanitizeRemoteURL` и метод `SanitizeOutput`.

@@ -226,3 +226,21 @@ func TestGitConfigAccessTokenAndEnvFallback(t *testing.T) {
 	}
 }
 
+func TestWriteDirect(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "direct_config.json")
+	data := []byte(`{"test": "fallback"}` + "\n")
+
+	if err := writeDirect(filePath, data); err != nil {
+		t.Fatalf("writeDirect failed: %v", err)
+	}
+
+	read, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed reading direct file: %v", err)
+	}
+	if string(read) != string(data) {
+		t.Errorf("got %q, want %q", string(read), string(data))
+	}
+}
+

@@ -145,8 +145,11 @@ func (s *Storage) SaveStream(reader io.Reader, targetPath string) (int64, error)
 	}
 
 	if err := os.Rename(tmpPath, targetPath); err != nil {
+		if cpErr := copyFile(tmpPath, targetPath); cpErr != nil {
+			_ = os.Remove(tmpPath)
+			return 0, fmt.Errorf("failed to rename or copy temp file to target %q: %w (rename error: %v)", targetPath, cpErr, err)
+		}
 		_ = os.Remove(tmpPath)
-		return 0, fmt.Errorf("failed to rename temp file to target %q: %w", targetPath, err)
 	}
 
 	return written, nil
@@ -160,15 +163,53 @@ func (s *Storage) SaveBytes(data []byte, targetPath string) (int64, error) {
 
 	tmpPath := targetPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		return 0, fmt.Errorf("failed to write temp file %q: %w", tmpPath, err)
+		if writeErr := writeDirectFile(targetPath, data); writeErr != nil {
+			return 0, fmt.Errorf("failed to write file %q: %w", targetPath, writeErr)
+		}
+		return int64(len(data)), nil
 	}
 
 	if err := os.Rename(tmpPath, targetPath); err != nil {
 		_ = os.Remove(tmpPath)
-		return 0, fmt.Errorf("failed to rename temp file to target %q: %w", targetPath, err)
+		if writeErr := writeDirectFile(targetPath, data); writeErr != nil {
+			return 0, fmt.Errorf("failed to write target %q: %w (rename error: %v)", targetPath, writeErr, err)
+		}
+		return int64(len(data)), nil
 	}
 
 	return int64(len(data)), nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+func writeDirectFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 // VerifyFile checks that a file exists and is not empty.

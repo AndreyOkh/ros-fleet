@@ -244,15 +244,39 @@ func (sm *StateManager) saveLocked() error {
 
 	tmpFile := sm.path + ".tmp"
 	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
-		sm.logger.Error("Failed to write temporary state file", slog.Any("error", err))
-		return err
+		if writeErr := writeDirect(sm.path, data); writeErr != nil {
+			sm.logger.Error("Failed to write state file directly", slog.Any("error", writeErr))
+			return writeErr
+		}
+		return nil
 	}
 
 	if err := os.Rename(tmpFile, sm.path); err != nil {
+		// Fallback for Docker single-file bind mounts (EBUSY / EXDEV):
+		// When sm.path is a bind-mounted file, rename() fails because the target is a mount point.
 		_ = os.Remove(tmpFile)
-		sm.logger.Error("Failed to rename temporary state file", slog.Any("error", err))
-		return err
+		if writeErr := writeDirect(sm.path, data); writeErr != nil {
+			sm.logger.Error("Failed to persist state file directly after rename failure", slog.Any("error", writeErr))
+			return fmt.Errorf("failed writing state file: %w (rename error: %v)", writeErr, err)
+		}
+		return nil
 	}
 
+	return nil
+}
+
+func writeDirect(path string, data []byte) error {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to open file %q for writing: %w", path, err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("failed to write data to %q: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("failed to sync data to %q: %w", path, err)
+	}
 	return nil
 }

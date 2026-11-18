@@ -579,13 +579,35 @@ func (m *Manager) saveLocked() error {
 
 	tmpFile := m.path + ".tmp"
 	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
-		return fmt.Errorf("failed to write temp config file: %w", err)
+		return writeDirect(m.path, data)
 	}
 
 	if err := os.Rename(tmpFile, m.path); err != nil {
+		// Fallback for Docker single-file bind mounts (EBUSY / EXDEV):
+		// When m.path is a bind-mounted file, rename() fails because the target is a mount point.
+		// In this case, truncate and write directly to update the mounted file.
 		_ = os.Remove(tmpFile)
-		return fmt.Errorf("failed to atomically replace config file: %w", err)
+		if writeErr := writeDirect(m.path, data); writeErr != nil {
+			return fmt.Errorf("failed to write config file: %w (rename error: %v)", writeErr, err)
+		}
+		return nil
 	}
 
+	return nil
+}
+
+func writeDirect(path string, data []byte) error {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to open file %q for writing: %w", path, err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("failed to write data to %q: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("failed to sync data to %q: %w", path, err)
+	}
 	return nil
 }
