@@ -699,5 +699,79 @@ func TestConfigBackupFailureAbortsMigration(t *testing.T) {
 	}
 }
 
+func TestConfigUpdateCheckOptions(t *testing.T) {
+	// 1. Default configuration: update check is enabled
+	cfg := Config{}
+	if !cfg.IsUpdateCheckEnabled() {
+		t.Errorf("expected update check to be enabled by default")
+	}
+
+	// 2. Explicitly disabled via updates.enabled = false
+	f := false
+	cfgDisabled1 := Config{
+		Updates: UpdatesConfig{
+			Enabled: &f,
+		},
+	}
+	if cfgDisabled1.IsUpdateCheckEnabled() {
+		t.Errorf("expected update check to be disabled via updates.enabled = false")
+	}
+
+	// 3. Explicitly disabled via check_updates = false
+	cfgDisabled2 := Config{
+		CheckUpdates: &f,
+	}
+	if cfgDisabled2.IsUpdateCheckEnabled() {
+		t.Errorf("expected update check to be disabled via check_updates = false")
+	}
+
+	// 4. Explicitly enabled via updates.enabled = true
+	tr := true
+	cfgEnabled := Config{
+		Updates: UpdatesConfig{
+			Enabled: &tr,
+		},
+	}
+	if !cfgEnabled.IsUpdateCheckEnabled() {
+		t.Errorf("expected update check to be enabled via updates.enabled = true")
+	}
+
+	// 5. Test loading from JSON and unknown keys check
+	tempDir := t.TempDir()
+	cfgPath := filepath.Join(tempDir, "config.json")
+	jsonContent := `{
+		"config_version": 2,
+		"binary_backup_dir": "./backups/binary",
+		"export_dir": "./backups/exports",
+		"defaults": {
+			"user": "admin",
+			"password": "secret"
+		},
+		"updates": {
+			"enabled": false
+		},
+		"check_updates": false,
+		"routers": [
+			{"name": "r1", "host": "192.168.1.1"}
+		]
+	}`
+	if err := os.WriteFile(cfgPath, []byte(jsonContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr, err := NewManager(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	loaded := mgr.Get()
+	if loaded.IsUpdateCheckEnabled() {
+		t.Errorf("expected update check to be disabled after loading from JSON")
+	}
+	if mgr.GetMigrationNotice() != nil && len(mgr.GetMigrationNotice().UnknownKeys) > 0 {
+		t.Errorf("updates or check_updates flagged as unknown keys: %v", mgr.GetMigrationNotice().UnknownKeys)
+	}
+}
+
+
 
 

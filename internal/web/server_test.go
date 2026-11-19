@@ -684,4 +684,71 @@ func TestServerConcurrentUpdatesAndDismissal(t *testing.T) {
 	wg.Wait()
 }
 
+func TestServerDisabledUpdateChecker(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgFile := filepath.Join(tempDir, "config.json")
+	cfgJSON := `{
+		"config_version": 2,
+		"binary_backup_dir": "./backups/binary",
+		"export_dir": "./backups/exports",
+		"defaults": {
+			"user": "admin",
+			"password": "pwd"
+		},
+		"routers": [
+			{"name": "router1", "host": "192.168.1.1"}
+		]
+	}`
+	if err := os.WriteFile(cfgFile, []byte(cfgJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgMgr, err := config.NewManager(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateMgr, err := state.NewManager(filepath.Join(tempDir, "state.json"), slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := runner.New(cfgMgr, stateMgr, slog.Default())
+	sched, err := scheduler.New(nil, "", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pass checker as nil (representing disabled update checks)
+	srv, err := NewServer(cfgMgr, run, stateMgr, sched, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// 1. GET / - index should render without update-badge-container
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 OK for /, got %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "id=\"update-badge-container\"") {
+		t.Errorf("expected update-badge-container to be absent when update checker is disabled")
+	}
+
+	// 2. GET /update/badge - should return 204 No Content
+	req = httptest.NewRequest(http.MethodGet, "/update/badge", nil)
+	rr = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("expected 204 No Content for /update/badge, got %d", rr.Code)
+	}
+
+	// 3. GET /update/modal - should return 404 Not Found
+	req = httptest.NewRequest(http.MethodGet, "/update/modal", nil)
+	rr = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404 Not Found for /update/modal, got %d", rr.Code)
+	}
+}
+
+
 

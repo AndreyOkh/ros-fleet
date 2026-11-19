@@ -47,6 +47,8 @@ func main() {
 	logFormat := flag.String("log-format", "text", "Log format (text, json)")
 	showVersion := flag.Bool("version", false, "Print application version and exit")
 	selfUpdate := flag.Bool("self-update", false, "Perform self-update to latest release")
+	noUpdateCheck := flag.Bool("no-update-check", false, "Disable automatic check for updates on startup and in background (for offline/isolated environments)")
+	disableUpdateCheck := flag.Bool("disable-update-check", false, "Alias for -no-update-check")
 	flag.Parse()
 
 	if *showVersion {
@@ -81,6 +83,7 @@ func main() {
 		slog.String("config", *configPath),
 		slog.Bool("once", *runOnce),
 		slog.Bool("run_now", *runNow),
+		slog.Bool("no_update_check", *noUpdateCheck || *disableUpdateCheck),
 	)
 
 	// 1. Thread-safe configuration manager
@@ -101,6 +104,7 @@ func main() {
 		slog.String("schedule_tz", initialCfg.Schedule.Timezone),
 		slog.Bool("web_enabled", initialCfg.Web.Enabled),
 		slog.Bool("git_enabled", initialCfg.Git.Enabled),
+		slog.Bool("update_check_enabled", initialCfg.IsUpdateCheckEnabled()),
 	)
 
 	// 2. Persistent state manager (state.json)
@@ -146,8 +150,18 @@ func main() {
 	}
 
 	// Mode B: Daemon with Web UI and Time-of-Day Scheduler
-	checker := updater.NewChecker("AndreyOkh/ros-fleet", v.Version, logger)
-	checker.Start(ctx)
+	var checker *updater.Checker
+	updateCheckEnabled := initialCfg.IsUpdateCheckEnabled() && !*noUpdateCheck && !*disableUpdateCheck
+
+	if updateCheckEnabled {
+		checker = updater.NewChecker("AndreyOkh/ros-fleet", v.Version, logger)
+		checker.Start(ctx)
+	} else {
+		logger.Info("Automatic update checks are disabled",
+			slog.Bool("flag_no_update_check", *noUpdateCheck || *disableUpdateCheck),
+			slog.Bool("config_enabled", initialCfg.IsUpdateCheckEnabled()),
+		)
+	}
 
 	var webServer *web.Server
 	if initialCfg.Web.Enabled {

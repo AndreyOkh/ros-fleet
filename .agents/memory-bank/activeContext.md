@@ -124,6 +124,14 @@
     - Реализован фоновый и ручной чекер обновлений `Checker` с кастомными заголовками GitHub API, неблокирующим стартом, 12-часовым тикером и потокобезопасным кэшем статуса `GetStatus()`.
     - Реализован движок безопасного in-place обновления `RunSelfUpdate` для Linux: валидация архива по `sha256sums.txt`, распаковка в каталог исполняемого файла (`filepath.Dir(execPath)`) для исключения ошибки `EXDEV`, копирование прав доступа, атомарный swap через `.old` с откатом при сбое и вывод инструкций по перезапуску сервиса.
     - 100% покрытие unit-тестами с флагом `-race` и чистое прохождение `go vet`.
+  - **Отключение проверки обновлений для изолированных сред (Air-Gapped / Offline):**
+    - Реализована возможность полного отключения проверки обновлений через CLI и конфигурацию:
+      - Добавлены флаги запуска `-no-update-check` и `-disable-update-check` в `cmd/ros-fleet/main.go`.
+      - Добавлена секция `updates.enabled: bool` и параметр `check_updates: bool` в `internal/config/config.go` с методом `IsUpdateCheckEnabled() bool` (по умолчанию включено).
+      - При отключении проверки горутина `updater.Checker.Start()` не запускается, любые сетевые запросы к GitHub API блокируются, а в лог пишется информационное сообщение `Automatic update checks are disabled`.
+      - В Web UI (`internal/web/server.go`, `web/templates/index.html`) при отключенной проверке скрывается поллинг `/update/badge`, предотвращая холостые запросы браузера.
+      - Обновлены примеры в `config.example.json`, рабочий `config.json` и руководство в `README.md`.
+      - Добавлены unit-тесты `TestConfigUpdateCheckOptions` и `TestServerDisabledUpdateChecker` со 100% успешным прохождением под `-race`.
   - **Улучшение генерации GitHub Release Notes и Docker метаданных:**
     - Обновлен пайплайн `.github/workflows/release.yml`:
       - Добавлен триггер `workflow_dispatch` для возможности ручного запуска релизов из UI GitHub Actions.

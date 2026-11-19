@@ -46,6 +46,9 @@
     "notify_on_success": true,
     "timeout_sec": 15
   },
+  "updates": {
+    "enabled": true
+  },
   "routers": [
     {
       "enabled": true,

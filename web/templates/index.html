@@ -25,6 +25,7 @@
 
       <div class="header-actions">
         <!-- Update Badge Container -->
+        {{if .UpdateCheckEnabled}}
         <div id="update-badge-container" hx-get="/update/badge" hx-trigger="load, every 60s" hx-swap="innerHTML">
           {{if and .UpdateStatus .UpdateStatus.UpdateAvailable}}
             <button class="badge badge-update"
@@ -36,6 +37,7 @@
             </button>
           {{end}}
         </div>
+        {{end}}
 
         <button class="btn btn-secondary"
                 hx-get="/settings/defaults"

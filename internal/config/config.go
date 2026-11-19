@@ -34,6 +34,8 @@ type Config struct {
 	Web             WebConfig      `json:"web"`
 	Git             GitConfig      `json:"git"`
 	Telegram        TelegramConfig `json:"telegram"`
+	Updates         UpdatesConfig  `json:"updates"`
+	CheckUpdates    *bool          `json:"check_updates,omitempty"`
 	Routers         []RouterConfig `json:"routers"`
 }
 
@@ -82,6 +84,24 @@ type TelegramConfig struct {
 	ChatID          string `json:"chat_id"`
 	NotifyOnSuccess bool   `json:"notify_on_success"`
 	TimeoutSec      int    `json:"timeout_sec,omitempty"`
+}
+
+// UpdatesConfig specifies settings for automatic update checks.
+type UpdatesConfig struct {
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// IsUpdateCheckEnabled reports whether automatic update checks are enabled.
+// By default, update checks are enabled unless explicitly disabled via
+// updates.enabled = false or check_updates = false.
+func (c *Config) IsUpdateCheckEnabled() bool {
+	if c.CheckUpdates != nil && !*c.CheckUpdates {
+		return false
+	}
+	if c.Updates.Enabled != nil && !*c.Updates.Enabled {
+		return false
+	}
+	return true
 }
 
 // RouterConfig contains connection settings for a single MikroTik device.
@@ -647,6 +667,14 @@ func (m *Manager) Get() Config {
 	defer m.mu.RUnlock()
 
 	c := *m.cfg
+	if m.cfg.Updates.Enabled != nil {
+		b := *m.cfg.Updates.Enabled
+		c.Updates.Enabled = &b
+	}
+	if m.cfg.CheckUpdates != nil {
+		b := *m.cfg.CheckUpdates
+		c.CheckUpdates = &b
+	}
 	c.Routers = make([]RouterConfig, len(m.cfg.Routers))
 	for i, r := range m.cfg.Routers {
 		c.Routers[i] = r.Clone()

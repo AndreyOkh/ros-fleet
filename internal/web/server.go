@@ -68,12 +68,13 @@ type SummaryData struct {
 
 // IndexData is passed to the main index.html template.
 type IndexData struct {
-	Summary         SummaryData
-	Table           TableData
-	GitStatus       gitrepo.GitStatus
-	Version         version.Info
-	UpdateStatus    *updater.CheckResult
-	MigrationNotice *config.MigrationNotice
+	Summary            SummaryData
+	Table              TableData
+	GitStatus          gitrepo.GitStatus
+	Version            version.Info
+	UpdateStatus       *updater.CheckResult
+	UpdateCheckEnabled bool
+	MigrationNotice    *config.MigrationNotice
 }
 
 // ModalData is passed to the router add/edit modal template.
@@ -233,12 +234,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := IndexData{
-		Summary:         s.buildSummaryData(),
-		Table:           s.buildTableData(),
-		GitStatus:       s.runner.GitStatus(),
-		Version:         version.Get(),
-		UpdateStatus:    updateStatus,
-		MigrationNotice: migrationNotice,
+		Summary:            s.buildSummaryData(),
+		Table:              s.buildTableData(),
+		GitStatus:          s.runner.GitStatus(),
+		Version:            version.Get(),
+		UpdateStatus:       updateStatus,
+		UpdateCheckEnabled: s.checker != nil,
+		MigrationNotice:    migrationNotice,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -249,11 +251,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateBadge(w http.ResponseWriter, r *http.Request) {
-	var updateStatus *updater.CheckResult
-	if s.checker != nil {
-		updateStatus = s.checker.GetStatus()
+	if s.checker == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 
+	updateStatus := s.checker.GetStatus()
 	if updateStatus == nil || !updateStatus.UpdateAvailable {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -267,10 +270,12 @@ func (s *Server) handleUpdateBadge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateModal(w http.ResponseWriter, r *http.Request) {
-	var updateStatus *updater.CheckResult
-	if s.checker != nil {
-		updateStatus = s.checker.GetStatus()
+	if s.checker == nil {
+		http.Error(w, "Update checker is disabled", http.StatusNotFound)
+		return
 	}
+
+	updateStatus := s.checker.GetStatus()
 
 	type updateModalData struct {
 		CurrentVersion string
