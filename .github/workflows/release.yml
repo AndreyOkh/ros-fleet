@@ -4,18 +4,69 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name (e.g. v2.0.0)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  release-binaries:
-    name: Build & Release Static Binaries
+  release-docker:
+    name: Build & Push Multi-Arch Docker Image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set Version and Metadata
+        id: meta
+        run: |
+          VERSION="${{ inputs.tag || github.ref_name }}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/andreyokh/ros-fleet:latest
+            ghcr.io/andreyokh/ros-fleet:${{ steps.meta.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.meta.outputs.date }}
+
+  release-binaries:
+    name: Build & Release Static Binaries
+    needs: [release-docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -26,9 +77,11 @@ jobs:
       - name: Build and Package Binaries
         id: build
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ inputs.tag || github.ref_name }}"
           COMMIT="${{ github.sha }}"
           BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
           LDFLAGS="-s -w \
             -X github.com/AndreyOkh/ros-fleet/internal/version.Version=${VERSION} \
@@ -58,53 +111,58 @@ jobs:
           cd dist
           sha256sum ros-fleet_*.tar.gz > sha256sums.txt
           cat sha256sums.txt
+          cd ..
+
+          # Extract previous tag and build changelog summary
+          PREV_TAG=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || echo "")
+          if [ -n "${PREV_TAG}" ]; then
+            echo "Previous tag found: ${PREV_TAG}"
+            SUMMARY=$(git log "${PREV_TAG}..HEAD" --pretty=format:"* %s (%h)" --no-merges)
+            CHANGELOG_HEADER="### 📋 Изменения с релиза ${PREV_TAG}"
+          else
+            echo "No previous tag found, showing recent commits"
+            SUMMARY=$(git log --pretty=format:"* %s (%h)" --no-merges -n 25)
+            CHANGELOG_HEADER="### 📋 Что включено в релиз"
+          fi
+
+          cat <<EOF | sed 's/^          //' > dist/release_notes.md
+          ## 🐳 Docker Image
+          - **Registry:** \`ghcr.io/andreyokh/ros-fleet:${VERSION}\`
+          - **Latest:** \`ghcr.io/andreyokh/ros-fleet:latest\`
+          - **Architectures:** \`linux/amd64\`, \`linux/arm64\`
+
+          \`\`\`bash
+          docker pull ghcr.io/andreyokh/ros-fleet:${VERSION}
+          \`\`\`
+
+          \`\`\`yaml
+          services:
+            ros-fleet:
+              image: ghcr.io/andreyokh/ros-fleet:${VERSION}
+          \`\`\`
+
+          ---
+
+          ${CHANGELOG_HEADER}
+          ${SUMMARY}
+
+          ---
+
+          ## 📦 Статические бинарники (Linux)
+          - \`ros-fleet_${VERSION}_linux_amd64.tar.gz\` (x86_64)
+          - \`ros-fleet_${VERSION}_linux_arm64.tar.gz\` (ARM64)
+          - Контрольные суммы: \`sha256sums.txt\`
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Release ${{ github.ref_name }}"
+          name: "Release ${{ steps.build.outputs.version }}"
+          tag_name: "${{ steps.build.outputs.version }}"
+          body_path: dist/release_notes.md
           generate_release_notes: true
           files: |
             dist/ros-fleet_*.tar.gz
             dist/sha256sums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  release-docker:
-    name: Build & Push Multi-Arch Docker Image
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set Build Date
-        id: date
-        run: echo "date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_OUTPUT
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/andreyokh/ros-fleet:latest
-            ghcr.io/andreyokh/ros-fleet:${{ github.ref_name }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ steps.date.outputs.date }}

@@ -40,7 +40,7 @@
 - [x] **Интеграция Web UI и CLI (`cmd/ros-fleet`, `internal/web`, `web/`)**: CLI флаги `-version` и `-self-update`, запуск фонового `updater.Checker`, интерфейс `UpdateChecker`, бейджи версии и обновления, семантический футер, модальное окно обновления, баннер миграции с эндпоинтом `POST /notices/dismiss`.
 - [x] **CI/CD, Container & Documentation (Milestone 5)**:
   - `.github/workflows/ci.yml`: автоматическая проверка `go vet ./...`, `go test -race ./...`, статической сборки бинарника и Dockerfile build test при push/PR в `main`.
-  - `.github/workflows/release.yml`: сборка мультиплатформенных статических бинарников (`linux/amd64`, `linux/arm64`), архивация `ros-fleet_${VERSION}_linux_${ARCH}.tar.gz` (с префиксом `v`), генерация `sha256sums.txt`, публикация GitHub Release и сборка/пуш мульти-арх Docker-образов в `ghcr.io/andreyokh/ros-fleet` (`latest`, `v*`).
+  - `.github/workflows/release.yml`: сборка мультиплатформенных статических бинарников (`linux/amd64`, `linux/arm64`), архивация `ros-fleet_${VERSION}_linux_${ARCH}.tar.gz` (с префиксом `v`), генерация `sha256sums.txt`, публикация GitHub Release с автоматической сводкой изменений с предыдущего релиза и ссылками на Docker-образ, сборка/пуш мульти-арх Docker-образов в `ghcr.io/andreyokh/ros-fleet` (`latest`, `v*`), поддержка `workflow_dispatch`.
   - `Dockerfile`: поддержка Buildx multi-arch (`ARG TARGETOS`, `ARG TARGETARCH`), внедрение метаданных версии через `-ldflags` в `internal/version` и `main`, маркер рантайма `ENV DOCKER_CONTAINER=1`.
   - `compose.yaml`: указание официального публичного образа `image: ghcr.io/andreyokh/ros-fleet:latest`.
   - `Makefile`: синхронизация `LDFLAGS` с пакетом `internal/version`.
