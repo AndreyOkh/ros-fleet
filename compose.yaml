@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ros-fleet:latest
+    image: ghcr.io/andreyokh/ros-fleet:latest
     container_name: ros-fleet
     restart: unless-stopped
     ports:

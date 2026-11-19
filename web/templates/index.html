@@ -15,12 +15,28 @@
       <div class="brand">
         <div class="brand-icon">📡</div>
         <div>
-          <h1 class="brand-title">ros-fleet</h1>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h1 class="brand-title">ros-fleet</h1>
+            <span class="badge badge-version">{{if not (hasPrefix .Version.Version "v")}}v{{end}}{{.Version.Version}}</span>
+          </div>
           <p class="brand-subtitle">Централизованное управление и бэкап MikroTik RouterOS</p>
         </div>
       </div>
 
       <div class="header-actions">
+        <!-- Update Badge Container -->
+        <div id="update-badge-container" hx-get="/update/badge" hx-trigger="load, every 60s" hx-swap="innerHTML">
+          {{if and .UpdateStatus .UpdateStatus.UpdateAvailable}}
+            <button class="badge badge-update"
+                    hx-get="/update/modal"
+                    hx-target="#modal-container"
+                    hx-swap="innerHTML"
+                    title="Доступна новая версия ros-fleet ({{.UpdateStatus.LatestVersion}})">
+              🚀 Доступно обновление: {{.UpdateStatus.LatestVersion}}
+            </button>
+          {{end}}
+        </div>
+
         <button class="btn btn-secondary"
                 hx-get="/settings/defaults"
                 hx-target="#modal-container"
@@ -50,6 +66,35 @@
         </button>
       </div>
     </header>
+
+    <!-- Migration / Unknown Keys Notice Banner -->
+    {{if .MigrationNotice}}
+    <div class="notice-banner migration-banner {{if .MigrationNotice.UnknownKeys}}notice-warning{{else}}notice-info{{end}}" id="migration-notice-banner">
+      <div class="notice-content">
+        <span class="notice-icon">{{if .MigrationNotice.UnknownKeys}}⚠️{{else}}ℹ️{{end}}</span>
+        <div class="notice-body">
+          {{if .MigrationNotice.Migrated}}
+            <div><strong>Конфигурация обновлена:</strong> версия конфига автоматически повышена до {{.MigrationNotice.NewVersion}}{{if .MigrationNotice.BackupPath}} (резервная копия: <code>{{.MigrationNotice.BackupPath}}</code>){{end}}.</div>
+          {{end}}
+          {{if .MigrationNotice.UnknownKeys}}
+            <div class="notice-unknown-keys">
+              <strong>Внимание:</strong> обнаружены неизвестные параметры конфигурации:
+              <code>{{range $i, $k := .MigrationNotice.UnknownKeys}}{{if $i}}, {{end}}{{$k}}{{end}}</code>
+            </div>
+          {{else if not .MigrationNotice.Migrated}}
+            <div>{{.MigrationNotice.Message}}</div>
+          {{end}}
+        </div>
+      </div>
+      <button type="button" class="btn btn-sm notice-dismiss-btn"
+              hx-post="/notices/dismiss"
+              hx-target="#migration-notice-banner"
+              hx-swap="outerHTML"
+              title="Скрыть уведомление">
+        ✕ Закрыть
+      </button>
+    </div>
+    {{end}}
 
     <!-- KPI Summary Grid -->
     <div id="summary-cards-container" hx-get="/dashboard/summary" hx-trigger="load, every 30s" hx-swap="innerHTML">
@@ -156,6 +201,13 @@
     <div id="routers-table-container">
       {{template "table_container.html" .Table}}
     </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>ros-fleet {{if not (hasPrefix .Version.Version "v")}}v{{end}}{{.Version.Version}}</span>
+      {{if and .Version.Commit (ne .Version.Commit "unknown")}} &bull; <span>Коммит: <code>{{.Version.Commit}}</code></span>{{end}}
+      {{if and .Version.BuildDate (ne .Version.BuildDate "unknown")}} &bull; <span>Сборка: {{.Version.BuildDate}}</span>{{end}}
+    </footer>
   </div>
 
   <!-- Modal Container for Add/Edit Dialogs -->

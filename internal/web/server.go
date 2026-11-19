@@ -17,8 +17,15 @@ import (
 	"github.com/AndreyOkh/ros-fleet/internal/scheduler"
 	"github.com/AndreyOkh/ros-fleet/internal/state"
 	"github.com/AndreyOkh/ros-fleet/internal/storage"
+	"github.com/AndreyOkh/ros-fleet/internal/updater"
+	"github.com/AndreyOkh/ros-fleet/internal/version"
 	"github.com/AndreyOkh/ros-fleet/web"
 )
+
+// UpdateChecker provides access to update check results.
+type UpdateChecker interface {
+	GetStatus() *updater.CheckResult
+}
 
 // Server coordinates the web dashboard, API endpoints, and template rendering.
 type Server struct {
@@ -27,6 +34,7 @@ type Server struct {
 	runner     *runner.Runner
 	stateMgr   *state.StateManager
 	scheduler  *scheduler.Scheduler
+	checker    UpdateChecker
 	logger     *slog.Logger
 	templates  *template.Template
 	appCtx     context.Context
@@ -60,9 +68,12 @@ type SummaryData struct {
 
 // IndexData is passed to the main index.html template.
 type IndexData struct {
-	Summary   SummaryData
-	Table     TableData
-	GitStatus gitrepo.GitStatus
+	Summary         SummaryData
+	Table           TableData
+	GitStatus       gitrepo.GitStatus
+	Version         version.Info
+	UpdateStatus    *updater.CheckResult
+	MigrationNotice *config.MigrationNotice
 }
 
 // ModalData is passed to the router add/edit modal template.
@@ -86,7 +97,7 @@ type BackupsModalData struct {
 }
 
 // NewServer initializes the HTTP server, parses templates, and registers routes.
-func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.StateManager, sched *scheduler.Scheduler, logger *slog.Logger) (*Server, error) {
+func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.StateManager, sched *scheduler.Scheduler, checker UpdateChecker, logger *slog.Logger) (*Server, error) {
 	log := logger.With(slog.String("component", "web_server"))
 
 	tmplFuncs := template.FuncMap{
@@ -106,6 +117,7 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 			}
 			return "false"
 		},
+		"hasPrefix": strings.HasPrefix,
 	}
 
 	tmpl, err := template.New("").Funcs(tmplFuncs).ParseFS(web.Assets, "templates/*.html")
@@ -119,6 +131,7 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 		runner:    runner,
 		stateMgr:  stateMgr,
 		scheduler: sched,
+		checker:   checker,
 		logger:    log,
 		templates: tmpl,
 		appCtx:    appCtx,
@@ -162,6 +175,11 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 	// Bulk backup route
 	mux.HandleFunc("POST /backup/all", s.handleBackupAll)
 
+	// Update and notice routes
+	mux.HandleFunc("GET /update/badge", s.handleUpdateBadge)
+	mux.HandleFunc("GET /update/modal", s.handleUpdateModal)
+	mux.HandleFunc("POST /notices/dismiss", s.handleDismissNotice)
+
 	cfg := cfgMgr.Get()
 	var handler http.Handler = mux
 
@@ -204,10 +222,23 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var updateStatus *updater.CheckResult
+	if s.checker != nil {
+		updateStatus = s.checker.GetStatus()
+	}
+
+	var migrationNotice *config.MigrationNotice
+	if s.cfgMgr != nil {
+		migrationNotice = s.cfgMgr.GetMigrationNotice()
+	}
+
 	data := IndexData{
-		Summary:   s.buildSummaryData(),
-		Table:     s.buildTableData(),
-		GitStatus: s.runner.GitStatus(),
+		Summary:         s.buildSummaryData(),
+		Table:           s.buildTableData(),
+		GitStatus:       s.runner.GitStatus(),
+		Version:         version.Get(),
+		UpdateStatus:    updateStatus,
+		MigrationNotice: migrationNotice,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -215,6 +246,83 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("Template render error (index.html)", slog.Any("error", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) handleUpdateBadge(w http.ResponseWriter, r *http.Request) {
+	var updateStatus *updater.CheckResult
+	if s.checker != nil {
+		updateStatus = s.checker.GetStatus()
+	}
+
+	if updateStatus == nil || !updateStatus.UpdateAvailable {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "update_badge.html", updateStatus); err != nil {
+		s.logger.Error("Template render error (update_badge.html)", slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleUpdateModal(w http.ResponseWriter, r *http.Request) {
+	var updateStatus *updater.CheckResult
+	if s.checker != nil {
+		updateStatus = s.checker.GetStatus()
+	}
+
+	type updateModalData struct {
+		CurrentVersion string
+		LatestVersion  string
+		ReleaseNotes   string
+		PublishedAt    string
+		HTMLURL        string
+		IsDocker       bool
+	}
+
+	v := version.Get()
+	currVer := v.Version
+	latestVer := "latest"
+	notes := ""
+	pubDate := ""
+	htmlURL := ""
+
+	if updateStatus != nil {
+		if updateStatus.CurrentVersion != "" {
+			currVer = updateStatus.CurrentVersion
+		}
+		if updateStatus.LatestVersion != "" {
+			latestVer = updateStatus.LatestVersion
+		}
+		notes = updateStatus.ReleaseNotes
+		if !updateStatus.PublishedAt.IsZero() {
+			pubDate = updateStatus.PublishedAt.Format("2006-01-02 15:04:05 UTC")
+		}
+		htmlURL = updateStatus.HTMLURL
+	}
+
+	data := updateModalData{
+		CurrentVersion: currVer,
+		LatestVersion:  latestVer,
+		ReleaseNotes:   notes,
+		PublishedAt:    pubDate,
+		HTMLURL:        htmlURL,
+		IsDocker:       updater.IsRunningInDocker(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "update_modal.html", data); err != nil {
+		s.logger.Error("Template render error (update_modal.html)", slog.Any("error", err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleDismissNotice(w http.ResponseWriter, r *http.Request) {
+	if s.cfgMgr != nil {
+		s.cfgMgr.ClearMigrationNotice()
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/AndreyOkh/ros-fleet/internal/runner"
 	"github.com/AndreyOkh/ros-fleet/internal/scheduler"
 	"github.com/AndreyOkh/ros-fleet/internal/state"
+	"github.com/AndreyOkh/ros-fleet/internal/updater"
+	"github.com/AndreyOkh/ros-fleet/internal/version"
 )
 
 func setupTestServer(t *testing.T, authUser, authPass string) (*Server, string) {
@@ -70,7 +73,7 @@ func setupTestServer(t *testing.T, authUser, authPass string) (*Server, string) 
 		t.Fatal(err)
 	}
 
-	srv, err := NewServer(cfgMgr, run, stateMgr, sched, slog.Default())
+	srv, err := NewServer(cfgMgr, run, stateMgr, sched, nil, slog.Default())
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -372,4 +375,313 @@ func TestServerBackupsEndpoints(t *testing.T) {
 		t.Errorf("expected 403 Forbidden for path traversal attempt, got %d", rrAttack.Code)
 	}
 }
+
+type mockUpdateChecker struct {
+	mu     sync.RWMutex
+	status *updater.CheckResult
+}
+
+func (m *mockUpdateChecker) GetStatus() *updater.CheckResult {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.status == nil {
+		return nil
+	}
+	cp := *m.status
+	return &cp
+}
+
+func (m *mockUpdateChecker) setStatus(s *updater.CheckResult) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.status = s
+}
+
+func TestServerVersionInDashboard(t *testing.T) {
+	srv, _ := setupTestServer(t, "", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / returned status %d, want 200", rr.Code)
+	}
+
+	body := rr.Body.String()
+	// Version badge in header
+	if !strings.Contains(body, "badge-version") {
+		t.Errorf("expected dashboard HTML to contain version badge 'badge-version', got:\n%s", body)
+	}
+
+	// Active version in footer
+	if !strings.Contains(body, "<footer class=\"footer\">") {
+		t.Errorf("expected dashboard HTML to contain semantic footer")
+	}
+
+	currVer := version.Get().Version
+	if !strings.Contains(body, currVer) {
+		t.Errorf("expected dashboard to render active version %q", currVer)
+	}
+}
+
+func TestServerUpdateEndpoints(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgFile := filepath.Join(tempDir, "config.json")
+	stateFile := filepath.Join(tempDir, "state.json")
+
+	cfgJSON := `{
+		"config_version": 2,
+		"binary_backup_dir": "` + tempDir + `/backups/binary",
+		"export_dir": "` + tempDir + `/backups/exports",
+		"state_file": "` + stateFile + `",
+		"defaults": {"port": 22, "user": "admin", "password": "pwd"},
+		"web": {"enabled": true, "listen_addr": ":8080"},
+		"routers": [{"name": "R1", "host": "10.0.0.1"}]
+	}`
+	if err := os.WriteFile(cfgFile, []byte(cfgJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgMgr, err := config.NewManager(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateMgr, err := state.NewManager(stateFile, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := runner.New(cfgMgr, stateMgr, slog.Default())
+	sched, err := scheduler.New(nil, "", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checker := &mockUpdateChecker{}
+	srv, err := NewServer(cfgMgr, run, stateMgr, sched, checker, slog.Default())
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// 1. GET /update/badge when no update available (returns 204 No Content)
+	reqBadge1 := httptest.NewRequest(http.MethodGet, "/update/badge", nil)
+	rrBadge1 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrBadge1, reqBadge1)
+	if rrBadge1.Code != http.StatusNoContent {
+		t.Errorf("expected 204 No Content when no update, got %d", rrBadge1.Code)
+	}
+
+	// 2. Set update available
+	checker.setStatus(&updater.CheckResult{
+		UpdateAvailable: true,
+		CurrentVersion:  "v2.1.0",
+		LatestVersion:   "v2.2.0",
+		ReleaseNotes:    "Release v2.2.0 includes major improvements and bugfixes.",
+		PublishedAt:     time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC),
+		HTMLURL:         "https://github.com/AndreyOkh/ros-fleet/releases/tag/v2.2.0",
+	})
+
+	// 3. GET /update/badge returns 200 with badge markup
+	reqBadge2 := httptest.NewRequest(http.MethodGet, "/update/badge", nil)
+	rrBadge2 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrBadge2, reqBadge2)
+	if rrBadge2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for update badge, got %d", rrBadge2.Code)
+	}
+	badgeHTML := rrBadge2.Body.String()
+	if !strings.Contains(badgeHTML, "badge-update") || !strings.Contains(badgeHTML, "v2.2.0") {
+		t.Errorf("unexpected badge markup: %s", badgeHTML)
+	}
+
+	// 4. GET /update/modal returns 200 with modal and commands
+	reqModal := httptest.NewRequest(http.MethodGet, "/update/modal", nil)
+	rrModal := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrModal, reqModal)
+	if rrModal.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for update modal, got %d", rrModal.Code)
+	}
+	modalHTML := rrModal.Body.String()
+	if !strings.Contains(modalHTML, "update-modal") {
+		t.Errorf("expected modal to contain update-modal id, got: %s", modalHTML)
+	}
+	if !strings.Contains(modalHTML, "v2.2.0") {
+		t.Errorf("expected modal to mention latest version v2.2.0")
+	}
+	if !strings.Contains(modalHTML, "Release v2.2.0 includes major improvements") {
+		t.Errorf("expected modal to contain release notes")
+	}
+	if !strings.Contains(modalHTML, "docker compose pull ros-fleet") {
+		t.Errorf("expected modal to contain Docker update command")
+	}
+	if !strings.Contains(modalHTML, "./ros-fleet -self-update") {
+		t.Errorf("expected modal to contain CLI self-update command")
+	}
+}
+
+func TestServerMigrationBannerAndDismiss(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgFile := filepath.Join(tempDir, "config.json")
+	stateFile := filepath.Join(tempDir, "state.json")
+
+	// Create legacy v1 config with backup_dir and unknown key
+	cfgJSON := `{
+		"backup_dir": "` + tempDir + `/backups",
+		"state_file": "` + stateFile + `",
+		"unknown_custom_key": "some_value",
+		"defaults": {"port": 22, "user": "admin", "password": "pwd"},
+		"web": {"enabled": true, "listen_addr": ":8080"},
+		"routers": [{"name": "R1", "host": "10.0.0.1"}]
+	}`
+	if err := os.WriteFile(cfgFile, []byte(cfgJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgMgr, err := config.NewManager(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfgMgr.GetMigrationNotice() == nil {
+		t.Fatalf("expected non-nil MigrationNotice after loading v1 config")
+	}
+
+	stateMgr, err := state.NewManager(stateFile, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := runner.New(cfgMgr, stateMgr, slog.Default())
+	sched, err := scheduler.New(nil, "", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := NewServer(cfgMgr, run, stateMgr, sched, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// 1. GET / renders migration banner
+	reqIndex := httptest.NewRequest(http.MethodGet, "/", nil)
+	rrIndex := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrIndex, reqIndex)
+	if rrIndex.Code != http.StatusOK {
+		t.Fatalf("GET / returned %d, want 200", rrIndex.Code)
+	}
+	bodyIndex := rrIndex.Body.String()
+	if !strings.Contains(bodyIndex, "migration-notice-banner") {
+		t.Errorf("expected dashboard to contain migration-notice-banner")
+	}
+	if !strings.Contains(bodyIndex, "unknown_custom_key") {
+		t.Errorf("expected dashboard banner to mention unknown_custom_key")
+	}
+
+	// 2. POST /notices/dismiss dismisses notice
+	reqDismiss := httptest.NewRequest(http.MethodPost, "/notices/dismiss", nil)
+	rrDismiss := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrDismiss, reqDismiss)
+	if rrDismiss.Code != http.StatusOK {
+		t.Fatalf("POST /notices/dismiss returned %d, want 200", rrDismiss.Code)
+	}
+
+	if cfgMgr.GetMigrationNotice() != nil {
+		t.Errorf("expected MigrationNotice to be cleared after dismissal")
+	}
+
+	// 3. GET / again does not render banner
+	rrIndex2 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrIndex2, reqIndex)
+	if rrIndex2.Code != http.StatusOK {
+		t.Fatalf("GET / returned %d, want 200", rrIndex2.Code)
+	}
+	if strings.Contains(rrIndex2.Body.String(), "migration-notice-banner") {
+		t.Errorf("expected migration banner to be absent after dismissal")
+	}
+
+	// 4. POST /notices/dismiss again is idempotent
+	rrDismiss2 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrDismiss2, reqDismiss)
+	if rrDismiss2.Code != http.StatusOK {
+		t.Errorf("expected 200 OK on idempotent dismissal, got %d", rrDismiss2.Code)
+	}
+}
+
+func TestServerConcurrentUpdatesAndDismissal(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgFile := filepath.Join(tempDir, "config.json")
+	stateFile := filepath.Join(tempDir, "state.json")
+
+	cfgJSON := `{
+		"config_version": 2,
+		"binary_backup_dir": "` + tempDir + `/backups/binary",
+		"export_dir": "` + tempDir + `/backups/exports",
+		"state_file": "` + stateFile + `",
+		"defaults": {"port": 22, "user": "admin", "password": "pwd"},
+		"web": {"enabled": true, "listen_addr": ":8080"},
+		"routers": [{"name": "R1", "host": "10.0.0.1"}]
+	}`
+	if err := os.WriteFile(cfgFile, []byte(cfgJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgMgr, err := config.NewManager(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateMgr, err := state.NewManager(stateFile, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := runner.New(cfgMgr, stateMgr, slog.Default())
+	sched, err := scheduler.New(nil, "", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checker := &mockUpdateChecker{
+		status: &updater.CheckResult{
+			UpdateAvailable: true,
+			LatestVersion:   "v3.0.0",
+		},
+	}
+
+	srv, err := NewServer(cfgMgr, run, stateMgr, sched, checker, slog.Default())
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(4)
+
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodGet, "/update/badge", nil)
+			rr := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(rr, req)
+		}()
+
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodGet, "/update/modal", nil)
+			rr := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(rr, req)
+		}()
+
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/notices/dismiss", nil)
+			rr := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(rr, req)
+		}()
+
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			rr := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(rr, req)
+		}()
+	}
+
+	wg.Wait()
+}
+
 

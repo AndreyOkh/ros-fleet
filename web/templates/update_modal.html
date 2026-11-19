@@ -1,0 +1,74 @@
+<div class="modal-overlay" id="update-modal" onclick="if(event.target===this) document.getElementById('modal-container').innerHTML = ''">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 class="modal-title">🚀 Доступно обновление ros-fleet</h3>
+      <button class="close-btn" onclick="document.getElementById('modal-container').innerHTML = ''">&times;</button>
+    </div>
+
+    <div style="margin-bottom: 16px;">
+      <p style="font-size: 14px; margin-bottom: 8px;">
+        Текущая версия: <strong>{{if .CurrentVersion}}{{.CurrentVersion}}{{else}}—{{end}}</strong> &rarr;
+        Новая версия: <strong style="color: var(--success-color);">{{if .LatestVersion}}{{.LatestVersion}}{{else}}latest{{end}}</strong>
+      </p>
+      {{if .PublishedAt}}
+      <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+        Дата релиза: {{.PublishedAt}}
+      </p>
+      {{end}}
+      {{if .HTMLURL}}
+      <p style="font-size: 13px; margin-bottom: 12px;">
+        <a href="{{.HTMLURL}}" target="_blank" rel="noopener noreferrer" style="color: var(--accent-color); text-decoration: underline;">
+          Открыть страницу релиза на GitHub &nearr;
+        </a>
+      </p>
+      {{end}}
+    </div>
+
+    {{if .ReleaseNotes}}
+    <div style="margin-bottom: 16px;">
+      <label style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); display: block; margin-bottom: 6px;">
+        Список изменений (Release Notes)
+      </label>
+      <div class="release-notes-box">{{.ReleaseNotes}}</div>
+    </div>
+    {{end}}
+
+    <div style="margin-bottom: 16px;">
+      <label style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); display: block; margin-bottom: 6px;">
+        Инструкция по обновлению
+      </label>
+
+      {{if .IsDocker}}
+      <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">
+        Для Docker Compose:
+      </p>
+      <div class="code-copy-box" onclick="navigator.clipboard.writeText('docker compose pull ros-fleet && docker compose up -d ros-fleet'); alert('Команда скопирована в буфер обмена!');" title="Нажмите, чтобы скопировать">
+        <code>docker compose pull ros-fleet &amp;&amp; docker compose up -d ros-fleet</code>
+        <span>📋</span>
+      </div>
+      {{else}}
+      <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 4px;">
+        Для Linux-бинарника (CLI):
+      </p>
+      <div class="code-copy-box" onclick="navigator.clipboard.writeText('./ros-fleet -self-update && sudo systemctl restart ros-fleet'); alert('Команда скопирована в буфер обмена!');" title="Нажмите, чтобы скопировать">
+        <code>./ros-fleet -self-update &amp;&amp; sudo systemctl restart ros-fleet</code>
+        <span>📋</span>
+      </div>
+
+      <p style="font-size: 13px; color: var(--text-secondary); margin-top: 12px; margin-bottom: 4px;">
+        Для Docker Compose:
+      </p>
+      <div class="code-copy-box" onclick="navigator.clipboard.writeText('docker compose pull ros-fleet && docker compose up -d ros-fleet'); alert('Команда скопирована в буфер обмена!');" title="Нажмите, чтобы скопировать">
+        <code>docker compose pull ros-fleet &amp;&amp; docker compose up -d ros-fleet</code>
+        <span>📋</span>
+      </div>
+      {{end}}
+    </div>
+
+    <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
+      <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-container').innerHTML = ''">
+        Закрыть
+      </button>
+    </div>
+  </div>
+</div>

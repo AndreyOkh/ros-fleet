@@ -34,4 +34,20 @@
 
 ## In Progress / Planned
 - [x] Memory Bank, Rules, Skills и Workflows для AI-агента в `.agents/`.
+- [x] **Гибридное версионирование (`internal/version`)**: извлечение VCS-метаданных через `runtime/debug.ReadBuildInfo()` с поддержкой переопределения через `-ldflags` (`Version`, `Commit`, `BuildDate`).
+- [x] **Update Checker & Linux Self-Update Engine (`internal/updater`)**: парсинг SemVer, периодическая проверка релизов GitHub, детектирование Docker, проверка контрольных сумм SHA-256, EXDEV-безопасная распаковка, атомарный swap и rollback.
+- [x] **Версионирование конфигурации и авто-миграция (`internal/config`)**: CurrentConfigVersion = 2, сохранение побайтовой копии `.v1.bak`, миграция `backup_dir` -> `binary_backup_dir`/`export_dir`, рекурсивное обнаружение всех неизвестных параметров без early abort, атомарное сохранение v2 и потокобезопасный `MigrationNotice`.
+- [x] **Интеграция Web UI и CLI (`cmd/ros-fleet`, `internal/web`, `web/`)**: CLI флаги `-version` и `-self-update`, запуск фонового `updater.Checker`, интерфейс `UpdateChecker`, бейджи версии и обновления, семантический футер, модальное окно обновления, баннер миграции с эндпоинтом `POST /notices/dismiss`.
+- [x] **CI/CD, Container & Documentation (Milestone 5)**:
+  - `.github/workflows/ci.yml`: автоматическая проверка `go vet ./...`, `go test -race ./...`, статической сборки бинарника и Dockerfile build test при push/PR в `main`.
+  - `.github/workflows/release.yml`: сборка мультиплатформенных статических бинарников (`linux/amd64`, `linux/arm64`), архивация `ros-fleet_${VERSION}_linux_${ARCH}.tar.gz` (с префиксом `v`), генерация `sha256sums.txt`, публикация GitHub Release и сборка/пуш мульти-арх Docker-образов в `ghcr.io/andreyokh/ros-fleet` (`latest`, `v*`).
+  - `Dockerfile`: поддержка Buildx multi-arch (`ARG TARGETOS`, `ARG TARGETARCH`), внедрение метаданных версии через `-ldflags` в `internal/version` и `main`, маркер рантайма `ENV DOCKER_CONTAINER=1`.
+  - `compose.yaml`: указание официального публичного образа `image: ghcr.io/andreyokh/ros-fleet:latest`.
+  - `Makefile`: синхронизация `LDFLAGS` с пакетом `internal/version`.
+  - `README.md`: документирование запуска из GHCR, пошаговых процедур обновления и автомиграции конфигурации.
+- [x] **Milestone 6: Финальный прогон E2E тестов и Hardening**:
+  - Phase 1: 100% прохождение E2E тестов (Tiers 1-4, 131 тест) и всех unit-тестов (70 тестов) под `go test -race ./...`.
+  - Phase 2: Устранение ложных срабатываний и стабилизация отказоустойчивости (TC01 полноценный бинарник в E2E апгрейде, TC07 строгий возврат ошибок при невозможности создания временного файла).
+  - Phase 3: Adversarial coverage hardening (56 тестов Tier 2: стресс-тесты, фаззинг, инъекции, лимиты, поврежденные архивы).
+  - Phase 4: Валидация чистоты кода (`go vet -all ./...` и `go build ./...` с кодом 0).
 - [ ] Опциональный экспорт метрик в Prometheus.

@@ -6,7 +6,7 @@
 ```
 cmd/ros-fleet/main.go  --> Точка входа, парсинг CLI флагов, инициализация сервисов
 internal/
-├── config/            --> Чтение config.json, валидация, слияние defaults
+├── config/            --> Чтение config.json, валидация, авто-миграция v1->v2, defaults
 ├── gitrepo/           --> Git CLI обертка, нормализация RouterOS header, commit, push
 ├── mikrotik/          --> SSH клиент, SFTP загрузка, выполнение команд ROS v6/v7
 ├── notifier/          --> Telegram Bot API клиент, форматирование HTML отчетов
@@ -14,6 +14,8 @@ internal/
 ├── scheduler/         --> Планировщик по расписанию (Time-of-Day с часовыми поясами)
 ├── state/             --> Персистентное хранилище state.json (RWMutex, атомарная запись)
 ├── storage/           --> Управление бинарными бэкапами и ротация по retention_days
+├── updater/           --> GitHub releases client, SemVer, Docker detection, Linux self-update
+├── version/           --> Гибридное версионирование (ReadBuildInfo + -ldflags)
 └── web/               --> Встроенный HTMX Web UI (embed.FS, SSE / Polling, Basic Auth)
 ```
 
@@ -35,3 +37,12 @@ internal/
 5. **Наследование настроек (`Defaults`):**
    - Роутеры могут наследовать глобальные параметры (порт, пользователь, пароль, SSH-ключ, пароль шифрования бэкапа, sensitive export) или переопределять их.
    - В UI это реализовано через 3-позиционные/сегментные переключатели (По умолчанию / Включено / Отключено).
+6. **Гибридное версионирование и безопасное обновление (`internal/version`, `internal/updater`):**
+   - Определение версии из `runtime/debug.ReadBuildInfo()` с бесшовным переопределением через `-ldflags` при компиляции в контейнере/CI.
+   - Детектирование обновлений через GitHub Releases API (с заголовками `Accept: application/vnd.github+json` и `User-Agent: ros-fleet`).
+   - SemVer компаратор с отсечением суффиксов `+dirty` и dev-версий.
+   - Безопасный Linux self-update: проверка контрольных сумм по `sha256sums.txt`, распаковка архива `ros-fleet_${VERSION}_linux_${ARCH}.tar.gz` во временный файл в каталоге исполняемого файла (`filepath.Dir(execPath)`) для исключения `EXDEV`, копирование прав доступа, атомарный swap через `.old` с откатом.
+   - Определение окружения Docker (`/.dockerenv`, `ENV DOCKER_CONTAINER=1`) и запрет self-update с рекомендацией обновить контейнер.
+7. **CI/CD и контейнеризация (GitHub Actions & Multi-Arch Docker):**
+   - Единый CI-пайплайн (`ci.yml`) с проверкой `go vet`, `go test -race`, статической компиляции и сборки Dockerfile с Buildx.
+   - Релизный пайплайн (`release.yml`) по тегам `v*`: компиляция CGO_ENABLED=0 для `amd64` и `arm64`, жесткое именование архивов `ros-fleet_${VERSION}_linux_${ARCH}.tar.gz` (с сохранением префикса `v`), генерация `sha256sums.txt`, публикация GitHub Release и публикация multi-arch Docker-образа в GHCR со строго строчным именем репозитория (`ghcr.io/andreyokh/ros-fleet`).

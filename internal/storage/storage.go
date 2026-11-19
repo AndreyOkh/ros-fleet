@@ -163,10 +163,7 @@ func (s *Storage) SaveBytes(data []byte, targetPath string) (int64, error) {
 
 	tmpPath := targetPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		if writeErr := writeDirectFile(targetPath, data); writeErr != nil {
-			return 0, fmt.Errorf("failed to write file %q: %w", targetPath, writeErr)
-		}
-		return int64(len(data)), nil
+		return 0, fmt.Errorf("failed to write temp file %q: %w", tmpPath, err)
 	}
 
 	if err := os.Rename(tmpPath, targetPath); err != nil {

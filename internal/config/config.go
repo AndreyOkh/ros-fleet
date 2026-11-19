@@ -5,16 +5,23 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
+// CurrentConfigVersion is the current configuration schema version.
+const CurrentConfigVersion = 2
+
 // Config represents the application configuration.
 type Config struct {
+	ConfigVersion   int            `json:"config_version"`
 	BinaryBackupDir string         `json:"binary_backup_dir"`
 	ExportDir       string         `json:"export_dir"`
 	BackupDir       string         `json:"backup_dir,omitempty"`
@@ -228,29 +235,205 @@ func (r RouterConfig) Effective(def DefaultsConfig) EffectiveRouterConfig {
 	return eff
 }
 
-// Load reads and parses a JSON configuration file from disk.
+// Load reads and parses a JSON configuration file from disk, performing auto-migration if needed.
 func Load(path string) (*Config, error) {
+	cfg, _, err := loadAndMigrate(path)
+	return cfg, err
+}
+
+func loadAndMigrate(path string) (*Config, *MigrationNotice, error) {
 	cleanPath := filepath.Clean(path)
 	data, err := os.ReadFile(cleanPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file %q: %w", cleanPath, err)
+		return nil, nil, fmt.Errorf("failed to read config file %q: %w", cleanPath, err)
+	}
+
+	var probe struct {
+		ConfigVersion *int `json:"config_version"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, nil, fmt.Errorf("failed to parse JSON config: %w", err)
+	}
+
+	if probe.ConfigVersion != nil && *probe.ConfigVersion < 0 {
+		return nil, nil, fmt.Errorf("invalid config_version %d in %q", *probe.ConfigVersion, cleanPath)
+	}
+
+	version := 1
+	if probe.ConfigVersion != nil && *probe.ConfigVersion > 0 {
+		version = *probe.ConfigVersion
+	}
+
+	if version > CurrentConfigVersion {
+		return nil, nil, fmt.Errorf("unsupported configuration version %d (current supported version is %d); please upgrade ros-fleet", version, CurrentConfigVersion)
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON config: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse JSON config: %w", err)
 	}
 
-	cfg.applyDefaults()
+	var raw map[string]any
+	_ = json.Unmarshal(data, &raw)
 
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+	var notice *MigrationNotice
+
+	if version < CurrentConfigVersion {
+		backupPath := fmt.Sprintf("%s.v%d.bak", cleanPath, version)
+		if err := os.WriteFile(backupPath, data, 0o600); err != nil {
+			return nil, nil, fmt.Errorf("failed to create config backup %q: %w", backupPath, err)
+		}
+
+		// Migrate deprecated fields
+		if strings.TrimSpace(cfg.BackupDir) != "" {
+			if strings.TrimSpace(cfg.BinaryBackupDir) == "" {
+				cfg.BinaryBackupDir = filepath.Join(cfg.BackupDir, "binary")
+			}
+			if strings.TrimSpace(cfg.ExportDir) == "" {
+				cfg.ExportDir = filepath.Join(cfg.BackupDir, "exports")
+			}
+			cfg.BackupDir = ""
+		}
+
+		cfg.ConfigVersion = CurrentConfigVersion
+		cfg.applyDefaults()
+
+		// Unknown field detection (exclude backup_dir during v1 migration)
+		unknownKeys := findUnknownKeys(raw, reflect.TypeOf(Config{}), "", true)
+		sort.Strings(unknownKeys)
+
+		if len(unknownKeys) > 0 {
+			slog.Warn("Unknown configuration keys detected in config",
+				slog.Any("unknown_keys", unknownKeys),
+				slog.Int("count", len(unknownKeys)),
+			)
+		}
+
+		if err := cfg.Validate(); err != nil {
+			return nil, nil, fmt.Errorf("invalid configuration: %w", err)
+		}
+
+		// Atomically persist updated v2 config to disk
+		if err := saveConfigToDisk(cleanPath, &cfg); err != nil {
+			return nil, nil, fmt.Errorf("failed to save migrated configuration to %q: %w", cleanPath, err)
+		}
+
+		slog.Info("Configuration migrated to new version",
+			slog.Int("from_version", version),
+			slog.Int("to_version", CurrentConfigVersion),
+			slog.String("backup", backupPath),
+		)
+
+		msg := fmt.Sprintf("Конфигурация автоматически обновлена с версии %d до %d. Резервная копия: %s.", version, CurrentConfigVersion, filepath.Base(backupPath))
+		notice = &MigrationNotice{
+			Migrated:    true,
+			OldVersion:  version,
+			NewVersion:  CurrentConfigVersion,
+			BackupPath:  backupPath,
+			UnknownKeys: unknownKeys,
+			Message:     msg,
+		}
+	} else {
+		cfg.applyDefaults()
+
+		// Unknown field check on v2
+		unknownKeys := findUnknownKeys(raw, reflect.TypeOf(Config{}), "", false)
+		sort.Strings(unknownKeys)
+
+		if len(unknownKeys) > 0 {
+			slog.Warn("Unknown configuration keys detected in config",
+				slog.Any("unknown_keys", unknownKeys),
+				slog.Int("count", len(unknownKeys)),
+			)
+			notice = &MigrationNotice{
+				Migrated:    false,
+				UnknownKeys: unknownKeys,
+				Message:     fmt.Sprintf("Обнаружены неизвестные параметры конфигурации (%d шт.)", len(unknownKeys)),
+			}
+		}
+
+		if err := cfg.Validate(); err != nil {
+			return nil, nil, fmt.Errorf("invalid configuration: %w", err)
+		}
 	}
 
-	return &cfg, nil
+	return &cfg, notice, nil
+}
+
+func findUnknownKeys(raw any, t reflect.Type, prefix string, isV1Migration bool) []string {
+	var unknown []string
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	switch t.Kind() {
+	case reflect.Struct:
+		rawMap, ok := raw.(map[string]any)
+		if !ok {
+			return nil
+		}
+		known := make(map[string]reflect.Type)
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			tag := f.Tag.Get("json")
+			if tag == "-" {
+				continue
+			}
+			name := strings.Split(tag, ",")[0]
+			if name == "" {
+				name = f.Name
+			}
+			// In v2 schema, backup_dir is deprecated and not considered a valid v2 key
+			if t == reflect.TypeOf(Config{}) && name == "backup_dir" {
+				continue
+			}
+			known[name] = f.Type
+		}
+
+		keys := make([]string, 0, len(rawMap))
+		for k := range rawMap {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			// In v1 migration, backup_dir is a recognized deprecated field, not an unknown key
+			if isV1Migration && prefix == "" && k == "backup_dir" {
+				continue
+			}
+
+			keyPath := k
+			if prefix != "" {
+				keyPath = prefix + "." + k
+			}
+
+			fieldType, exists := known[k]
+			if !exists {
+				unknown = append(unknown, keyPath)
+			} else {
+				unknown = append(unknown, findUnknownKeys(rawMap[k], fieldType, keyPath, false)...)
+			}
+		}
+
+	case reflect.Slice:
+		rawSlice, ok := raw.([]any)
+		if !ok {
+			return nil
+		}
+		elemType := t.Elem()
+		for i, item := range rawSlice {
+			itemPrefix := fmt.Sprintf("%s[%d]", prefix, i)
+			unknown = append(unknown, findUnknownKeys(item, elemType, itemPrefix, false)...)
+		}
+	}
+
+	return unknown
 }
 
 func (c *Config) applyDefaults() {
+	if c.ConfigVersion <= 0 {
+		c.ConfigVersion = CurrentConfigVersion
+	}
 	if strings.TrimSpace(c.BinaryBackupDir) == "" {
 		if strings.TrimSpace(c.BackupDir) != "" {
 			c.BinaryBackupDir = filepath.Join(c.BackupDir, "binary")
@@ -401,23 +584,61 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// Manager coordinates thread-safe access and persistence of the configuration.
-type Manager struct {
-	path string
-	mu   sync.RWMutex
-	cfg  *Config
+// MigrationNotice holds details about configuration migration or unknown keys detected.
+type MigrationNotice struct {
+	Migrated    bool     `json:"migrated"`
+	OldVersion  int      `json:"old_version,omitempty"`
+	NewVersion  int      `json:"new_version,omitempty"`
+	BackupPath  string   `json:"backup_path,omitempty"`
+	UnknownKeys []string `json:"unknown_keys,omitempty"`
+	Message     string   `json:"message"`
 }
 
-// NewManager loads configuration and initializes a thread-safe Manager.
+// ConfigManager is an alias for Manager to allow interchangeable usage.
+type ConfigManager = Manager
+
+// Manager coordinates thread-safe access and persistence of the configuration.
+type Manager struct {
+	path            string
+	mu              sync.RWMutex
+	cfg             *Config
+	migrationNotice *MigrationNotice
+}
+
+// NewManager loads configuration, performs auto-migration if needed, and initializes a thread-safe Manager.
 func NewManager(path string) (*Manager, error) {
-	cfg, err := Load(path)
+	cfg, notice, err := loadAndMigrate(path)
 	if err != nil {
 		return nil, err
 	}
 	return &Manager{
-		path: filepath.Clean(path),
-		cfg:  cfg,
+		path:            filepath.Clean(path),
+		cfg:             cfg,
+		migrationNotice: notice,
 	}, nil
+}
+
+// GetMigrationNotice returns a deep copy of the migration notice, or nil if none.
+func (m *Manager) GetMigrationNotice() *MigrationNotice {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.migrationNotice == nil {
+		return nil
+	}
+	cp := *m.migrationNotice
+	if m.migrationNotice.UnknownKeys != nil {
+		cp.UnknownKeys = append([]string(nil), m.migrationNotice.UnknownKeys...)
+	}
+	return &cp
+}
+
+// ClearMigrationNotice clears the current migration notice in memory.
+func (m *Manager) ClearMigrationNotice() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.migrationNotice = nil
 }
 
 // Get returns a deep copy of the current configuration.
@@ -571,23 +792,27 @@ func (m *Manager) Save() error {
 }
 
 func (m *Manager) saveLocked() error {
-	data, err := json.Marshal(m.cfg, jsontext.WithIndent("  "))
+	return saveConfigToDisk(m.path, m.cfg)
+}
+
+func saveConfigToDisk(path string, cfg *Config) error {
+	data, err := json.Marshal(cfg, jsontext.WithIndent("  "))
 	if err != nil {
 		return fmt.Errorf("failed to encode config to JSON: %w", err)
 	}
 	data = append(data, '\n')
 
-	tmpFile := m.path + ".tmp"
+	tmpFile := path + ".tmp"
 	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
-		return writeDirect(m.path, data)
+		return fmt.Errorf("failed to write temp config file: %w", err)
 	}
 
-	if err := os.Rename(tmpFile, m.path); err != nil {
+	if err := os.Rename(tmpFile, path); err != nil {
 		// Fallback for Docker single-file bind mounts (EBUSY / EXDEV):
-		// When m.path is a bind-mounted file, rename() fails because the target is a mount point.
+		// When path is a bind-mounted file, rename() fails because the target is a mount point.
 		// In this case, truncate and write directly to update the mounted file.
 		_ = os.Remove(tmpFile)
-		if writeErr := writeDirect(m.path, data); writeErr != nil {
+		if writeErr := writeDirect(path, data); writeErr != nil {
 			return fmt.Errorf("failed to write config file: %w (rename error: %v)", writeErr, err)
 		}
 		return nil

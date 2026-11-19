@@ -2,6 +2,58 @@
 
 ## Current Status & Focus
 - **Последние изменения в проекте:**
+  - **CI/CD пайплайны, контейнеризация и документация (Requirement R4, R5 / Milestone 5):**
+    - Создан workflow continuous integration `.github/workflows/ci.yml`:
+      - Срабатывает при `push` и `pull_request` в ветку `main`.
+      - Шаг проверки исходного кода `go vet ./...` и запуск тестов с детектором гонок `go test -v -race ./...`.
+      - Проверка сборки статического бинарника `CGO_ENABLED=0 go build -v -trimpath -o /dev/null ./cmd/ros-fleet`.
+      - Тестовая сборка Docker-образа через `docker/setup-buildx-action@v3` и `docker/build-push-action@v6` без пуша с передачей `VERSION`, `COMMIT`, `BUILD_DATE`.
+    - Создан workflow публикации релизов `.github/workflows/release.yml`:
+      - Срабатывает при `push` тегов по маске `v*`.
+      - Назначены разрешения `contents: write` и `packages: write`.
+      - Сборка статических бинарников (`CGO_ENABLED=0`) для платформ `linux/amd64` и `linux/arm64` с внедрением метаданных версии в пакет `internal/version` и `main` через `-ldflags`.
+      - Строгая архивация по маске `ros-fleet_${VERSION}_linux_${ARCH}.tar.gz` (с сохранением префикса `v` в имени архива и корневым бинарником `ros-fleet` внутри архива).
+      - Расчет хэш-сумм `sha256sum ros-fleet_*.tar.gz > sha256sums.txt`.
+      - Автоматическое создание GitHub Release через `softprops/action-gh-release@v2` с автогенерацией release notes и загрузкой архивов и `sha256sums.txt`.
+      - Мультиплатформенная сборка (`linux/amd64`, `linux/arm64`) и публикация Docker-образа в GitHub Container Registry по строго строчному имени `ghcr.io/andreyokh/ros-fleet` с тегами `latest` и `${{ github.ref_name }}`.
+    - Обновлен `Dockerfile`:
+      - Добавлены сборочные аргументы `ARG TARGETOS` и `ARG TARGETARCH`.
+      - Директива сборки использует `GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64}` и внедряет ldflags для `internal/version` и `main`.
+      - В финальный рантайм-образ на базе `alpine:3.21` добавлен маркер окружения `ENV DOCKER_CONTAINER=1`.
+    - Обновлен `compose.yaml`:
+      - Тег образа изменен с локального `ros-fleet:latest` на официальный `ghcr.io/andreyokh/ros-fleet:latest`.
+    - Обновлен `Makefile`:
+      - Переменная `LDFLAGS` дополнена флагами внедрения метаданных в пакет `internal/version` (`Version`, `Commit`, `BuildDate`).
+    - Обновлена документация в `README.md`:
+      - Добавлено руководство по быстрому запуску готового контейнера из GHCR (`ghcr.io/andreyokh/ros-fleet:latest`).
+      - Документированы пошаговые сценарии обновления: для Docker Compose (`docker compose pull && docker compose up -d`) и Linux-бинарников (`./ros-fleet -self-update && sudo systemctl restart ros-fleet`).
+      - Описана логика автоматической миграции конфигурации (`config_version: 2`, побайтовый бэкап `.v1.bak`, перенос `backup_dir` -> `binary_backup_dir`/`export_dir`, обнаружение неизвестных ключей, всплывающий баннер на дашборде с закрытием через HTMX).
+      - Описаны флаги командной строки `-version` и `-self-update`.
+  - **Интеграция Web UI и CLI флагов (Requirement R1, R2, R3 / Milestone 4):**
+    - Реализованы и протестированы CLI флаги в `cmd/ros-fleet/main.go`:
+      - Флаг `-version` выводит информацию о версии из `versionPkg.Get().String()` (`ros-fleet version <ver> (commit <commit>, built at <date>)`) и завершает работу с кодом 0 до загрузки конфигурации.
+      - Поддержана обратная совместимость со старыми флагами линковщика `-X main.version=... -X main.commit=... -X main.date=...` через функцию `init()`, перенаправляющую значения в `internal/version`.
+      - Флаг `-self-update` выполняет безопасное обновление Linux-бинарника; при запуске внутри контейнера Docker выдает чистое руководство по обновлению через `docker compose pull && docker compose up -d` с кодом выхода 0.
+      - В режиме сервера запущен фоновый чекер обновлений `updater.NewChecker("AndreyOkh/ros-fleet", ...)` с передачей в `web.NewServer`.
+    - Добавлен интерфейс `UpdateChecker` в `internal/web` и расширена структура `IndexData` полями `Version`, `UpdateStatus` и `MigrationNotice`.
+    - Реализованы маршруты и обработчики в `internal/web/server.go`:
+      - `GET /update/badge`: возвращает бейдж обновления или 204 No Content.
+      - `GET /update/modal`: возвращает модальное окно с release notes и копируемыми командами для Docker и Linux CLI.
+      - `POST /notices/dismiss`: потокобезопасно сбрасывает `MigrationNotice` в `ConfigManager` с кодом 200 OK для удаления баннера через HTMX `outerHTML`.
+    - Обновлены шаблоны `web/templates`:
+      - В `index.html` добавлен бейдж версии в шапке, контейнер бейджа обновления `#update-badge-container`, баннер миграции `#migration-notice-banner` с кнопкой закрытия и семантический футер.
+      - Созданы шаблоны `update_badge.html` и `update_modal.html`.
+    - Добавлены CSS-стили в `web/static/style.css` для `.badge-update`, `.notice-banner`, `.notice-info`, `.notice-warning`, `.footer`, `.release-notes-box` и `.code-copy-box`.
+    - Все юнит-тесты в `internal/web/server_test.go` и полный E2E набор в `test/e2e` проходят чисто со 100% успехом под `-race`.
+  - **Версионирование конфигурации и автоматическая миграция (Requirement R3 / Milestone 2):**
+    - Реализовано версионирование конфигурации с константой `CurrentConfigVersion = 2` и полем `config_version` в `Config`, `config.example.json` и `config.json`.
+    - Поддержана автоматическая детекция версий: отсутствие поля или `0` интерпретируется как версия 1.
+    - Реализовано создание побайтово точной резервной копии `<config_path>.v<old_version>.bak` с правами `0o600` перед любыми модификациями файла на диске при миграции.
+    - Реализована миграция устаревшего поля `backup_dir` в `binary_backup_dir` и `export_dir` с очисткой `backup_dir` (исключается из сохранения на диск благодаря `omitempty`).
+    - Реализовано рекурсивное обнаружение всех неизвестных параметров конфигурации через рефлексию над `map[string]any` без раннего прерывания; `backup_dir` исключается из неизвестных ключей только при миграции с v1.
+    - Реализована безопасная атомарная запись мигрированной конфигурации на диск через `.tmp` и `os.Rename` с фолбэком для Docker bind-mounts.
+    - В `ConfigManager` (`Manager`) добавлена структура `MigrationNotice` с потокобезопасными методами `GetMigrationNotice()` (глубокая копия) и `ClearMigrationNotice()`.
+    - Написаны исчерпывающие юнит-тесты в `internal/config/config_test.go` с проверкой создания бэкапа, исключения `backup_dir`, обнаружения неизвестных ключей и race safety.
   - **Мультиселект в фильтрах таблицы, устранение моргания и сброса фильтров при фоновых запросах:**
     - Реализованы кастомные выпадающие списки мультивыбора для колонок «Модель», «Версия ROS», «Статус бэкапа» и «Активность»:
       - Поддержка выбора нескольких значений одновременно через чекбоксы.
@@ -66,12 +118,32 @@
     - Обеспечена полная потокобезопасность `ConfigManager`: реализован метод `Clone()` для `RouterConfig` с глубоким копированием указателей, исключая data race.
     - Улучшена устойчивость RouterOS CLI: во все `print`-команды добавлен флаг `without-paging`, реализован корректный фолбэк модели для CHR и x86.
     - Усилена защита от Path Traversal при формировании путей экспортов и бинарных бэкапов в `internal/storage`.
+  - **Реализация Update Checker & Linux Self-Update Engine (`internal/updater`, Milestone 3):**
+    - Реализован парсер SemVer и компаратор `ParseSemver` / `IsUpdateAvailable` с фильтрацией `+dirty`, prerelease-суффиксов и защитой от ложных алертов на dev-сборках.
+    - Реализовано определение окружения Docker `IsRunningInDocker()` через `/.dockerenv` и переменные окружения с мокабельными хуками.
+    - Реализован фоновый и ручной чекер обновлений `Checker` с кастомными заголовками GitHub API, неблокирующим стартом, 12-часовым тикером и потокобезопасным кэшем статуса `GetStatus()`.
+    - Реализован движок безопасного in-place обновления `RunSelfUpdate` для Linux: валидация архива по `sha256sums.txt`, распаковка в каталог исполняемого файла (`filepath.Dir(execPath)`) для исключения ошибки `EXDEV`, копирование прав доступа, атомарный swap через `.old` с откатом при сбое и вывод инструкций по перезапуску сервиса.
+    - 100% покрытие unit-тестами с флагом `-race` и чистое прохождение `go vet`.
+  - **Финальный прогон E2E тестирования и стабилизация (Milestone 6):**
+    - Устранено падение E2E теста `TestTier4_TC01_FullUpgradeLifecycle`:
+      - Выявлена причина: моковый шелл-скрипт из `BuildMockBinaryPayload` при перезапуске демона с флагом `-config` мгновенно завершался без запуска HTTP-сервера, что вызывало таймаут ожидания готовности (5s).
+      - В `test/e2e/archive_test.go` реализован хелпер `BuildRealBinaryPayload(t *testing.T, versionStr string) []byte`, компилирующий подлинный бинарник `cmd/ros-fleet` с внедрением версии через `-ldflags` (`main.version`, `internal/version.Version`) и потокобезопасным кэшированием в памяти.
+      - В `test/e2e/tier4_test.go:66` вызов заменен на `BuildRealBinaryPayload`, что обеспечило полноценный перезапуск обновленного сервиса и успешную проверку бейджа обновления (`204 No Content`).
+    - Устранено падение E2E теста `TestTier4_TC07_ResilientAtomicRollback_ConfigWriteFailure`:
+      - Выявлена причина: в `internal/config/config.go` (`saveConfigToDisk`) при ошибке записи временного файла (`os.WriteFile(tmpFile)`) происходил преждевременный переход на `writeDirect(path, data)`. Под Linux DAC запись в уже существующий файл с правами `0600` внутри директории `0555` не проверяет права на запись директории, в результате чего `Save()` возвращал `nil` вместо ошибки, нарушая гарантии атомарного отката.
+      - Преждевременный фолбэк удален: при ошибке записи во временный файл немедленно возвращается ошибка (`failed to write temp config file: %w`). Фолбэк `writeDirect` сохранен исключительно для ошибки `os.Rename` (случай Docker bind-mount файлов с `EBUSY`/`EXDEV`).
+      - Аналогичные исправления синхронно применены к `internal/state/state.go` и `internal/storage/storage.go` для сохранения целостности атомарной записи.
+    - Достигнуто 100% прохождение всех тестов проекта (201 тест: 70 unit-тестов + 131 E2E тест Tiers 1-4) под `go test -race ./...` без гонок данных и утечек.
+    - Статический анализ `go vet -all ./...` и сборка `go build ./...` завершаются с кодом 0 и нулевыми предупреждениями.
 - **Текущая задача:**
-  - Завершение финального аудита и полировки UI/UX `ros-fleet`.
+  - Milestone 6: Финальный прогон E2E тестов и Hardening успешно завершен. Все тесты стабильны.
 
 ## Active Decisions & Considerations
-- Все тесты, включая race detector (`go test -race ./...`), проходят успешно.
+- Все тесты, включая race detector (`go test -race ./...`), проходят успешно (100% pass rate, 201/201).
 - Клиентская фильтрация работает на нативных data-атрибутах строк таблицы (`data-name`, `data-host`, `data-model`, `data-version`, `data-status`, `data-enabled`) без сторонних библиотек.
+- Именование релизных архивов строго следует формату `ros-fleet_${VERSION}_linux_${ARCH}.tar.gz` с сохранением префикса `v`.
+- Имя репозитория в GHCR строго в нижнем регистре: `ghcr.io/andreyokh/ros-fleet`.
+- Фолбэк на прямую запись файлов (`writeDirect`) строго изолирован в обработчиках ошибок переименования (`os.Rename`), исключая обход ограничений прав директорий при сбое записи во временный файл.
 
 ## Next Steps
-- Релиз и тестирование в боевой среде MikroTik парка.
+- Опциональный экспорт метрик в Prometheus.

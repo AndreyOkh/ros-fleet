@@ -1,4 +1,5 @@
 {
+  "config_version": 2,
   "binary_backup_dir": "./backups/binary",
   "export_dir": "./backups/exports",
   "state_file": "./state.json",

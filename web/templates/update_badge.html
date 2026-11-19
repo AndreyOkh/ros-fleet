@@ -1,0 +1,7 @@
+<button class="badge badge-update"
+        hx-get="/update/modal"
+        hx-target="#modal-container"
+        hx-swap="innerHTML"
+        title="Доступна новая версия ros-fleet ({{.LatestVersion}})">
+  🚀 Доступно обновление: {{.LatestVersion}}
+</button>

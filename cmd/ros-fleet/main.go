@@ -15,15 +15,29 @@ import (
 	"github.com/AndreyOkh/ros-fleet/internal/runner"
 	"github.com/AndreyOkh/ros-fleet/internal/scheduler"
 	"github.com/AndreyOkh/ros-fleet/internal/state"
+	"github.com/AndreyOkh/ros-fleet/internal/updater"
+	versionPkg "github.com/AndreyOkh/ros-fleet/internal/version"
 	"github.com/AndreyOkh/ros-fleet/internal/web"
 )
 
 var (
-	// Version metadata populated via -ldflags
-	version = "2.1.0"
-	commit  = "none"
-	date    = "unknown"
+	// Backward-compatible ldflags targets in package main
+	version = ""
+	commit  = ""
+	date    = ""
 )
+
+func init() {
+	if version != "" && versionPkg.Version == "" {
+		versionPkg.Version = version
+	}
+	if commit != "" && versionPkg.Commit == "" {
+		versionPkg.Commit = commit
+	}
+	if date != "" && versionPkg.BuildDate == "" {
+		versionPkg.BuildDate = date
+	}
+}
 
 func main() {
 	configPath := flag.String("config", "config.json", "Path to JSON configuration file")
@@ -32,18 +46,38 @@ func main() {
 	logLevelStr := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	logFormat := flag.String("log-format", "text", "Log format (text, json)")
 	showVersion := flag.Bool("version", false, "Print application version and exit")
+	selfUpdate := flag.Bool("self-update", false, "Perform self-update to latest release")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("ros-fleet version %s (commit %s, built at %s)\n", version, commit, date)
+		v := versionPkg.Get()
+		fmt.Println(v.String())
+		os.Exit(0)
+	}
+
+	if *selfUpdate {
+		if updater.IsRunningInDocker() {
+			fmt.Print("ros-fleet is running inside a Docker container.\n" +
+				"Self-update of binary is disabled. Please pull the latest container image:\n\n" +
+				"    docker compose pull ros-fleet\n" +
+				"    docker compose up -d ros-fleet\n")
+			os.Exit(0)
+		}
+		logger := setupLogger(*logLevelStr, *logFormat)
+		v := versionPkg.Get()
+		if err := updater.RunSelfUpdate(context.Background(), "AndreyOkh/ros-fleet", v.Version, logger); err != nil {
+			logger.Error("Self-update failed", slog.Any("error", err))
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
 	logger := setupLogger(*logLevelStr, *logFormat)
 	slog.SetDefault(logger)
 
+	v := versionPkg.Get()
 	logger.Info("Initializing ros-fleet",
-		slog.String("version", version),
+		slog.String("version", v.Version),
 		slog.String("config", *configPath),
 		slog.Bool("once", *runOnce),
 		slog.Bool("run_now", *runNow),
@@ -112,9 +146,12 @@ func main() {
 	}
 
 	// Mode B: Daemon with Web UI and Time-of-Day Scheduler
+	checker := updater.NewChecker("AndreyOkh/ros-fleet", v.Version, logger)
+	checker.Start(ctx)
+
 	var webServer *web.Server
 	if initialCfg.Web.Enabled {
-		webServer, err = web.NewServer(cfgMgr, fleetRunner, stateMgr, sched, logger)
+		webServer, err = web.NewServer(cfgMgr, fleetRunner, stateMgr, sched, checker, logger)
 		if err != nil {
 			logger.Error("Failed to initialize web server", slog.Any("error", err))
 			os.Exit(1)

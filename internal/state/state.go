@@ -244,11 +244,8 @@ func (sm *StateManager) saveLocked() error {
 
 	tmpFile := sm.path + ".tmp"
 	if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
-		if writeErr := writeDirect(sm.path, data); writeErr != nil {
-			sm.logger.Error("Failed to write state file directly", slog.Any("error", writeErr))
-			return writeErr
-		}
-		return nil
+		sm.logger.Error("Failed to write temporary state file", slog.Any("error", err))
+		return fmt.Errorf("failed to write temp state file: %w", err)
 	}
 
 	if err := os.Rename(tmpFile, sm.path); err != nil {

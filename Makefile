@@ -4,7 +4,11 @@ APP_NAME := ros-fleet
 VERSION ?= 2.0.0
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "manual")
 DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
+LDFLAGS := -s -w \
+	-X github.com/AndreyOkh/ros-fleet/internal/version.Version=$(VERSION) \
+	-X github.com/AndreyOkh/ros-fleet/internal/version.Commit=$(COMMIT) \
+	-X github.com/AndreyOkh/ros-fleet/internal/version.BuildDate=$(DATE) \
+	-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
 all: test build
 
