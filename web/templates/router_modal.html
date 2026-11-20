@@ -40,8 +40,17 @@
 
         <div class="form-group full-width">
           <label for="password">Пароль устройства</label>
-          <input type="password" id="password" name="password" value="{{.Router.Password}}" placeholder="••••••••">
-          <small class="form-hint text-muted">По умолчанию: {{if .Defaults.Password}}•••••••• (задан в defaults){{else}}не задан{{end}}</small>
+          <input type="password" id="password" name="password" value="" autocomplete="new-password"
+                 placeholder="{{if .HasPassword}}•••••••• (сохранен){{else if .HasDefaultPassword}}•••••••• (из defaults){{else}}••••••••{{end}}">
+          <small class="form-hint text-muted">
+            {{if .HasPassword}}
+              Индивидуальный пароль сохранен. Оставьте пустым, чтобы не изменять{{if .HasDefaultPassword}} (введите '-', чтобы сбросить на defaults){{end}}.
+            {{else if .HasDefaultPassword}}
+              По умолчанию: •••••••• (задан в defaults). Заполните только для переопределения.
+            {{else}}
+              По умолчанию: не задан
+            {{end}}
+          </small>
         </div>
 
         <div class="form-group">
@@ -52,8 +61,17 @@
 
         <div class="form-group">
           <label for="private_key_passphrase">Пароль от ключа</label>
-          <input type="password" id="private_key_passphrase" name="private_key_passphrase" value="{{.Router.PrivateKeyPassphrase}}" placeholder="Опционально">
-          <small class="form-hint text-muted">Для ключей с passphrase</small>
+          <input type="password" id="private_key_passphrase" name="private_key_passphrase" value="" autocomplete="new-password"
+                 placeholder="{{if .HasPrivateKeyPassphrase}}•••••••• (сохранен){{else if .HasDefaultPrivateKeyPassphrase}}•••••••• (из defaults){{else}}Опционально{{end}}">
+          <small class="form-hint text-muted">
+            {{if .HasPrivateKeyPassphrase}}
+              Индивидуальный пароль сохранен. Оставьте пустым, чтобы не изменять{{if .HasDefaultPrivateKeyPassphrase}} (введите '-', чтобы сбросить на defaults){{end}}.
+            {{else if .HasDefaultPrivateKeyPassphrase}}
+              По умолчанию: •••••••• (задан в defaults). Заполните только для переопределения.
+            {{else}}
+              Для ключей с passphrase
+            {{end}}
+          </small>
         </div>
       </div>
 
@@ -139,9 +157,17 @@
       <div class="form-group full-width" id="backup_pwd_group"
            style="margin-top: 14px; display: {{if eq $encryptState "true"}}block{{else}}none{{end}};">
         <label for="backup_password">Пароль шифрования бэкапа</label>
-        <input type="password" id="backup_password" name="backup_password" value="{{.Router.BackupPassword}}"
-               placeholder="Пароль для шифрования .backup">
-        <small class="form-hint text-muted">Индивидуальный пароль для шифрования бэкапа этого устройства</small>
+        <input type="password" id="backup_password" name="backup_password" value="" autocomplete="new-password"
+               placeholder="{{if .HasBackupPassword}}•••••••• (сохранен){{else if .HasDefaultBackupPassword}}•••••••• (из defaults){{else}}Пароль для шифрования .backup{{end}}">
+        <small class="form-hint text-muted">
+          {{if .HasBackupPassword}}
+            Индивидуальный пароль шифрования сохранен. Оставьте пустым, чтобы не изменять{{if .HasDefaultBackupPassword}} (введите '-', чтобы сбросить на defaults){{end}}.
+          {{else if .HasDefaultBackupPassword}}
+            По умолчанию: •••••••• (задан в defaults). Заполните только для переопределения.
+          {{else}}
+            Индивидуальный пароль для шифрования бэкапа этого устройства
+          {{end}}
+        </small>
       </div>
 
       <div class="form-actions" style="margin-top: 24px;">

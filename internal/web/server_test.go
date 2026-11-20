@@ -750,5 +750,277 @@ func TestServerDisabledUpdateChecker(t *testing.T) {
 	}
 }
 
+func TestSecretsNotLeakedInWebUIAndPreservedOnEdit(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgFile := filepath.Join(tempDir, "config.json")
+	stateFile := filepath.Join(tempDir, "state.json")
+
+	secretDefaultPassword := "secret_def_device_pwd_000"
+	secretDefaultPassphrase := "secret_def_pass_123"
+	secretDefaultBackupPwd := "secret_def_backup_pwd_456"
+
+	secretRouterPassword := "secret_r_device_pwd_111"
+	secretRouterPassphrase := "secret_r_pass_789"
+	secretRouterBackupPwd := "secret_r_backup_pwd_abc"
+
+	cfgJSON := `{
+		"config_version": 3,
+		"binary_backup_dir": "` + tempDir + `/backups/binary",
+		"export_dir": "` + tempDir + `/backups/exports",
+		"state_file": "` + stateFile + `",
+		"defaults": {
+			"port": 22,
+			"user": "admin",
+			"password": "` + secretDefaultPassword + `",
+			"private_key_path": "/path/to/def.key",
+			"private_key_passphrase": "` + secretDefaultPassphrase + `",
+			"encrypt_backup": true,
+			"backup_password": "` + secretDefaultBackupPwd + `"
+		},
+		"web": {
+			"enabled": true,
+			"listen_addr": ":8080",
+			"ssl_enabled": false
+		},
+		"routers": [
+			{
+				"name": "Router-Secured",
+				"host": "10.0.0.99",
+				"password": "` + secretRouterPassword + `",
+				"private_key_path": "/path/to/custom.key",
+				"private_key_passphrase": "` + secretRouterPassphrase + `",
+				"encrypt_backup": true,
+				"backup_password": "` + secretRouterBackupPwd + `"
+			}
+		]
+	}`
+
+	if err := os.WriteFile(cfgFile, []byte(cfgJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgMgr, err := config.NewManager(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stateMgr, err := state.NewManager(stateFile, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateMgr.InitFromConfig(cfgMgr.Get().Routers, cfgMgr.Get().Defaults)
+	run := runner.New(cfgMgr, stateMgr, slog.Default())
+	sched, err := scheduler.New([]string{"03:00"}, "UTC", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := NewServer(cfgMgr, run, stateMgr, sched, nil, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Verify GET /settings/defaults does NOT leak any secrets in HTML
+	reqDefModal := httptest.NewRequest(http.MethodGet, "/settings/defaults", nil)
+	rrDefModal := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrDefModal, reqDefModal)
+	if rrDefModal.Code != http.StatusOK {
+		t.Fatalf("GET /settings/defaults returned status %d", rrDefModal.Code)
+	}
+	bodyDef := rrDefModal.Body.String()
+	if strings.Contains(bodyDef, secretDefaultPassword) {
+		t.Errorf("GET /settings/defaults leaked default password in HTML!")
+	}
+	if strings.Contains(bodyDef, secretDefaultPassphrase) {
+		t.Errorf("GET /settings/defaults leaked default private_key_passphrase in HTML!")
+	}
+	if strings.Contains(bodyDef, secretDefaultBackupPwd) {
+		t.Errorf("GET /settings/defaults leaked default backup_password in HTML!")
+	}
+	if !strings.Contains(bodyDef, "•••••••• (сохранен)") {
+		t.Errorf("expected placeholder '•••••••• (сохранен)' in defaults modal")
+	}
+
+	// 2. Submit POST /settings/defaults with empty password, passphrase and backup_password -> must preserve secrets!
+	formDef := url.Values{}
+	formDef.Set("port", "2222")
+	formDef.Set("user", "admin_updated")
+	formDef.Set("password", "")               // left empty on edit
+	formDef.Set("private_key_path", "/path/to/def.key")
+	formDef.Set("private_key_passphrase", "") // left empty on edit
+	formDef.Set("encrypt_backup", "true")
+	formDef.Set("backup_password", "")        // left empty on edit
+
+	reqSaveDef := httptest.NewRequest(http.MethodPost, "/settings/defaults", strings.NewReader(formDef.Encode()))
+	reqSaveDef.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrSaveDef := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrSaveDef, reqSaveDef)
+	if rrSaveDef.Code != http.StatusOK {
+		t.Fatalf("POST /settings/defaults failed with status %d: %s", rrSaveDef.Code, rrSaveDef.Body.String())
+	}
+
+	updatedDefaults := srv.cfgMgr.Get().Defaults
+	if updatedDefaults.User != "admin_updated" {
+		t.Errorf("expected user 'admin_updated', got %q", updatedDefaults.User)
+	}
+	if updatedDefaults.Password != secretDefaultPassword {
+		t.Errorf("expected preserved Password %q, got %q", secretDefaultPassword, updatedDefaults.Password)
+	}
+	if updatedDefaults.PrivateKeyPassphrase != secretDefaultPassphrase {
+		t.Errorf("expected preserved PrivateKeyPassphrase %q, got %q", secretDefaultPassphrase, updatedDefaults.PrivateKeyPassphrase)
+	}
+	if updatedDefaults.BackupPassword != secretDefaultBackupPwd {
+		t.Errorf("expected preserved BackupPassword %q, got %q", secretDefaultBackupPwd, updatedDefaults.BackupPassword)
+	}
+
+	// 3. Verify GET /routers/new does NOT leak any secrets and indicates inherited defaults
+	reqNewModal := httptest.NewRequest(http.MethodGet, "/routers/new", nil)
+	rrNewModal := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrNewModal, reqNewModal)
+	if rrNewModal.Code != http.StatusOK {
+		t.Fatalf("GET /routers/new returned status %d", rrNewModal.Code)
+	}
+	bodyNew := rrNewModal.Body.String()
+	if strings.Contains(bodyNew, secretDefaultPassword) || strings.Contains(bodyNew, secretDefaultPassphrase) || strings.Contains(bodyNew, secretDefaultBackupPwd) {
+		t.Errorf("GET /routers/new leaked defaults secrets in HTML!")
+	}
+	if !strings.Contains(bodyNew, "•••••••• (из defaults)") {
+		t.Errorf("expected placeholder '•••••••• (из defaults)' in new router modal")
+	}
+
+	// 4. Verify GET /routers/Router-Secured/edit does NOT leak router secrets
+	reqEditModal := httptest.NewRequest(http.MethodGet, "/routers/Router-Secured/edit", nil)
+	rrEditModal := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrEditModal, reqEditModal)
+	if rrEditModal.Code != http.StatusOK {
+		t.Fatalf("GET /routers/Router-Secured/edit returned status %d", rrEditModal.Code)
+	}
+	bodyRouter := rrEditModal.Body.String()
+	if strings.Contains(bodyRouter, secretRouterPassword) {
+		t.Errorf("GET /routers/Router-Secured/edit leaked router password in HTML!")
+	}
+	if strings.Contains(bodyRouter, secretRouterPassphrase) {
+		t.Errorf("GET /routers/Router-Secured/edit leaked router private_key_passphrase in HTML!")
+	}
+	if strings.Contains(bodyRouter, secretRouterBackupPwd) {
+		t.Errorf("GET /routers/Router-Secured/edit leaked router backup_password in HTML!")
+	}
+	if !strings.Contains(bodyRouter, "•••••••• (сохранен)") {
+		t.Errorf("expected placeholder '•••••••• (сохранен)' in router edit modal")
+	}
+
+	// 5. Submit POST /routers (edit Router-Secured) with empty secrets -> must preserve existing!
+	formRouter := url.Values{}
+	formRouter.Set("name", "Router-Secured")
+	formRouter.Set("host", "10.0.0.100") // updated host
+	formRouter.Set("password", "")       // left empty
+	formRouter.Set("private_key_path", "/path/to/custom.key")
+	formRouter.Set("private_key_passphrase", "") // left empty
+	formRouter.Set("encrypt_backup", "true")
+	formRouter.Set("backup_password", "")        // left empty
+
+	reqSaveRouter := httptest.NewRequest(http.MethodPost, "/routers", strings.NewReader(formRouter.Encode()))
+	reqSaveRouter.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrSaveRouter := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrSaveRouter, reqSaveRouter)
+	if rrSaveRouter.Code != http.StatusOK {
+		t.Fatalf("POST /routers failed with status %d: %s", rrSaveRouter.Code, rrSaveRouter.Body.String())
+	}
+
+	savedRouter, found := srv.cfgMgr.GetRouter("Router-Secured")
+	if !found {
+		t.Fatalf("Router-Secured not found after update")
+	}
+	if savedRouter.Host != "10.0.0.100" {
+		t.Errorf("expected host 10.0.0.100, got %s", savedRouter.Host)
+	}
+	if savedRouter.Password != secretRouterPassword {
+		t.Errorf("expected preserved router Password %q, got %q", secretRouterPassword, savedRouter.Password)
+	}
+	if savedRouter.PrivateKeyPassphrase != secretRouterPassphrase {
+		t.Errorf("expected preserved router PrivateKeyPassphrase %q, got %q", secretRouterPassphrase, savedRouter.PrivateKeyPassphrase)
+	}
+	if savedRouter.BackupPassword != secretRouterBackupPwd {
+		t.Errorf("expected preserved router BackupPassword %q, got %q", secretRouterBackupPwd, savedRouter.BackupPassword)
+	}
+
+	// 6. Submit POST /routers with a NEW backup password and new device password -> must update!
+	newDevicePwd := "brand_new_device_pwd_888"
+	newBackupPwd := "brand_new_backup_pwd_999"
+	formRouter.Set("password", newDevicePwd)
+	formRouter.Set("backup_password", newBackupPwd)
+	reqSaveRouter2 := httptest.NewRequest(http.MethodPost, "/routers", strings.NewReader(formRouter.Encode()))
+	reqSaveRouter2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrSaveRouter2 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrSaveRouter2, reqSaveRouter2)
+	if rrSaveRouter2.Code != http.StatusOK {
+		t.Fatalf("POST /routers with new password failed with status %d", rrSaveRouter2.Code)
+	}
+
+	savedRouter2, _ := srv.cfgMgr.GetRouter("Router-Secured")
+	if savedRouter2.Password != newDevicePwd {
+		t.Errorf("expected updated Password %q, got %q", newDevicePwd, savedRouter2.Password)
+	}
+	if savedRouter2.BackupPassword != newBackupPwd {
+		t.Errorf("expected updated BackupPassword %q, got %q", newBackupPwd, savedRouter2.BackupPassword)
+	}
+
+	// Check that the new passwords are NOT rendered in the edit modal either
+	reqEditModal2 := httptest.NewRequest(http.MethodGet, "/routers/Router-Secured/edit", nil)
+	rrEditModal2 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrEditModal2, reqEditModal2)
+	if strings.Contains(rrEditModal2.Body.String(), newDevicePwd) {
+		t.Errorf("new Password leaked in edit modal!")
+	}
+	if strings.Contains(rrEditModal2.Body.String(), newBackupPwd) {
+		t.Errorf("new BackupPassword leaked in edit modal!")
+	}
+
+	// 7. Reset router password to defaults using "-"
+	formRouter.Set("password", "-")
+	reqSaveRouter3 := httptest.NewRequest(http.MethodPost, "/routers", strings.NewReader(formRouter.Encode()))
+	reqSaveRouter3.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrSaveRouter3 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrSaveRouter3, reqSaveRouter3)
+	if rrSaveRouter3.Code != http.StatusOK {
+		t.Fatalf("POST /routers with '-' password failed with status %d", rrSaveRouter3.Code)
+	}
+
+	savedRouter3, _ := srv.cfgMgr.GetRouter("Router-Secured")
+	if savedRouter3.Password != "" {
+		t.Errorf("expected cleared router Password, got %q", savedRouter3.Password)
+	}
+
+	// Modal now shows fallback to defaults
+	reqEditModal3 := httptest.NewRequest(http.MethodGet, "/routers/Router-Secured/edit", nil)
+	rrEditModal3 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrEditModal3, reqEditModal3)
+	bodyEdit3 := rrEditModal3.Body.String()
+	if !strings.Contains(bodyEdit3, "•••••••• (из defaults)") {
+		t.Errorf("expected placeholder '•••••••• (из defaults)' after resetting router password with '-'")
+	}
+
+	// 8. Verify Table and Backups Modal never leak secrets
+	reqTable := httptest.NewRequest(http.MethodGet, "/routers/table", nil)
+	rrTable := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrTable, reqTable)
+	bodyTable := rrTable.Body.String()
+	for _, sec := range []string{secretDefaultPassword, secretDefaultPassphrase, secretDefaultBackupPwd, newDevicePwd, newBackupPwd} {
+		if strings.Contains(bodyTable, sec) {
+			t.Errorf("Table leaked secret %q in HTML!", sec)
+		}
+	}
+
+	reqBackups := httptest.NewRequest(http.MethodGet, "/routers/Router-Secured/backups", nil)
+	rrBackups := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rrBackups, reqBackups)
+	bodyBackups := rrBackups.Body.String()
+	for _, sec := range []string{secretDefaultPassword, secretDefaultPassphrase, secretDefaultBackupPwd, newDevicePwd, newBackupPwd} {
+		if strings.Contains(bodyBackups, sec) {
+			t.Errorf("Backups modal leaked secret %q in HTML!", sec)
+		}
+	}
+}
+
 
 

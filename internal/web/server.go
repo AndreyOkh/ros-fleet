@@ -81,14 +81,45 @@ type IndexData struct {
 
 // ModalData is passed to the router add/edit modal template.
 type ModalData struct {
-	IsEdit   bool
-	Router   config.RouterConfig
-	Defaults config.DefaultsConfig
+	IsEdit                         bool
+	Router                         config.RouterConfig
+	Defaults                       config.DefaultsConfig
+	HasPassword                    bool
+	HasDefaultPassword             bool
+	HasPrivateKeyPassphrase        bool
+	HasDefaultPrivateKeyPassphrase bool
+	HasBackupPassword              bool
+	HasDefaultBackupPassword       bool
 }
 
 // DefaultsModalData is passed to the defaults modal template.
 type DefaultsModalData struct {
-	Defaults config.DefaultsConfig
+	Defaults                config.DefaultsConfig
+	HasPassword             bool
+	HasPrivateKeyPassphrase bool
+	HasBackupPassword       bool
+}
+
+// Zero-leak sanitizers to ensure sensitive credentials never reach templates or client responses.
+func sanitizeRouterConfig(rc config.RouterConfig) config.RouterConfig {
+	rc.Password = ""
+	rc.PrivateKeyPassphrase = ""
+	rc.BackupPassword = ""
+	return rc
+}
+
+func sanitizeEffectiveConfig(eff config.EffectiveRouterConfig) config.EffectiveRouterConfig {
+	eff.Password = ""
+	eff.PrivateKeyPassphrase = ""
+	eff.BackupPassword = ""
+	return eff
+}
+
+func sanitizeDefaultsConfig(def config.DefaultsConfig) config.DefaultsConfig {
+	def.Password = ""
+	def.PrivateKeyPassphrase = ""
+	def.BackupPassword = ""
+	return def
 }
 
 // BackupsModalData is passed to the backups list modal template.
@@ -423,8 +454,15 @@ func (s *Server) handleTable(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSettingsDefaultsModal(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfgMgr.Get()
+	hasPassword := strings.TrimSpace(cfg.Defaults.Password) != ""
+	hasPassphrase := strings.TrimSpace(cfg.Defaults.PrivateKeyPassphrase) != ""
+	hasBackupPwd := strings.TrimSpace(cfg.Defaults.BackupPassword) != ""
+
 	data := DefaultsModalData{
-		Defaults: cfg.Defaults,
+		Defaults:                sanitizeDefaultsConfig(cfg.Defaults),
+		HasPassword:             hasPassword,
+		HasPrivateKeyPassphrase: hasPassphrase,
+		HasBackupPassword:       hasBackupPwd,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "defaults_modal.html", data)
@@ -441,16 +479,42 @@ func (s *Server) handleSaveDefaults(w http.ResponseWriter, r *http.Request) {
 		port = 22
 	}
 
+	currentDefaults := s.cfgMgr.Get().Defaults
+
+	password := strings.TrimSpace(r.FormValue("password"))
+	if password == "-" {
+		password = ""
+	} else if password == "" {
+		password = currentDefaults.Password
+	}
+
+	passphrase := strings.TrimSpace(r.FormValue("private_key_passphrase"))
+	if passphrase == "-" {
+		passphrase = ""
+	} else if passphrase == "" {
+		passphrase = currentDefaults.PrivateKeyPassphrase
+	}
+
+	encryptBackup := r.FormValue("encrypt_backup") == "true"
+	backupPassword := strings.TrimSpace(r.FormValue("backup_password"))
+	if !encryptBackup {
+		backupPassword = ""
+	} else if backupPassword == "-" {
+		backupPassword = ""
+	} else if backupPassword == "" {
+		backupPassword = currentDefaults.BackupPassword
+	}
+
 	def := config.DefaultsConfig{
 		Port:                  port,
 		User:                  strings.TrimSpace(r.FormValue("user")),
-		Password:              strings.TrimSpace(r.FormValue("password")),
+		Password:              password,
 		PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
-		PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
+		PrivateKeyPassphrase:  passphrase,
 		InsecureIgnoreHostKey: r.FormValue("insecure_ignore_host_key") == "true",
 		ExportSensitive:       r.FormValue("export_sensitive") == "true",
-		EncryptBackup:         r.FormValue("encrypt_backup") == "true",
-		BackupPassword:        strings.TrimSpace(r.FormValue("backup_password")),
+		EncryptBackup:         encryptBackup,
+		BackupPassword:        backupPassword,
 	}
 
 	if err := s.cfgMgr.UpdateDefaults(def); err != nil {
@@ -465,10 +529,20 @@ func (s *Server) handleSaveDefaults(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNewRouterModal(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfgMgr.Get()
+	hasDefPassword := strings.TrimSpace(cfg.Defaults.Password) != ""
+	hasDefPassphrase := strings.TrimSpace(cfg.Defaults.PrivateKeyPassphrase) != ""
+	hasDefBackupPwd := strings.TrimSpace(cfg.Defaults.BackupPassword) != ""
+
 	data := ModalData{
-		IsEdit:   false,
-		Router:   config.RouterConfig{},
-		Defaults: cfg.Defaults,
+		IsEdit:                         false,
+		Router:                         config.RouterConfig{},
+		Defaults:                       sanitizeDefaultsConfig(cfg.Defaults),
+		HasPassword:                    false,
+		HasDefaultPassword:             hasDefPassword,
+		HasPrivateKeyPassphrase:        false,
+		HasDefaultPrivateKeyPassphrase: hasDefPassphrase,
+		HasBackupPassword:              false,
+		HasDefaultBackupPassword:       hasDefBackupPwd,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
@@ -483,10 +557,24 @@ func (s *Server) handleEditRouterModal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.cfgMgr.Get()
+	hasPassword := strings.TrimSpace(rc.Password) != ""
+	hasPassphrase := strings.TrimSpace(rc.PrivateKeyPassphrase) != ""
+	hasBackupPwd := strings.TrimSpace(rc.BackupPassword) != ""
+
+	hasDefPassword := strings.TrimSpace(cfg.Defaults.Password) != ""
+	hasDefPassphrase := strings.TrimSpace(cfg.Defaults.PrivateKeyPassphrase) != ""
+	hasDefBackupPwd := strings.TrimSpace(cfg.Defaults.BackupPassword) != ""
+
 	data := ModalData{
-		IsEdit:   true,
-		Router:   rc,
-		Defaults: cfg.Defaults,
+		IsEdit:                         true,
+		Router:                         sanitizeRouterConfig(rc),
+		Defaults:                       sanitizeDefaultsConfig(cfg.Defaults),
+		HasPassword:                    hasPassword,
+		HasDefaultPassword:             hasDefPassword,
+		HasPrivateKeyPassphrase:        hasPassphrase,
+		HasDefaultPrivateKeyPassphrase: hasDefPassphrase,
+		HasBackupPassword:              hasBackupPwd,
+		HasDefaultBackupPassword:       hasDefBackupPwd,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.templates.ExecuteTemplate(w, "router_modal.html", data)
@@ -502,7 +590,8 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 	host := strings.TrimSpace(r.FormValue("host"))
 
 	enabled := true
-	if existing, found := s.cfgMgr.GetRouter(name); found {
+	existing, isExisting := s.cfgMgr.GetRouter(name)
+	if isExisting {
 		enabled = existing.IsEnabled()
 	}
 
@@ -521,11 +610,33 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 
 	port, _ := strconv.Atoi(r.FormValue("port"))
 
+	password := strings.TrimSpace(r.FormValue("password"))
+	if password == "-" {
+		password = ""
+	} else if password == "" && isExisting {
+		password = existing.Password
+	}
+
 	encryptBackup := parseTriState(r.FormValue("encrypt_backup"))
 	backupPassword := strings.TrimSpace(r.FormValue("backup_password"))
 	// Only persist a device-specific backup password if encryption is explicitly enabled for this router.
 	if encryptBackup == nil || !*encryptBackup {
 		backupPassword = ""
+	} else if backupPassword == "-" {
+		backupPassword = ""
+	} else if backupPassword == "" && isExisting {
+		backupPassword = existing.BackupPassword
+	}
+
+	passphrase := strings.TrimSpace(r.FormValue("private_key_passphrase"))
+	if passphrase == "-" {
+		passphrase = ""
+	} else if passphrase == "" && isExisting {
+		if strings.TrimSpace(r.FormValue("private_key_path")) == "" && existing.PrivateKeyPath != "" {
+			passphrase = ""
+		} else {
+			passphrase = existing.PrivateKeyPassphrase
+		}
 	}
 
 	router := config.RouterConfig{
@@ -534,9 +645,9 @@ func (s *Server) handleSaveRouter(w http.ResponseWriter, r *http.Request) {
 		Host:                  host,
 		Port:                  port,
 		User:                  strings.TrimSpace(r.FormValue("user")),
-		Password:              strings.TrimSpace(r.FormValue("password")),
+		Password:              password,
 		PrivateKeyPath:        strings.TrimSpace(r.FormValue("private_key_path")),
-		PrivateKeyPassphrase:  strings.TrimSpace(r.FormValue("private_key_passphrase")),
+		PrivateKeyPassphrase:  passphrase,
 		InsecureIgnoreHostKey: parseTriState(r.FormValue("insecure_ignore_host_key")),
 		ExportSensitive:       parseTriState(r.FormValue("export_sensitive")),
 		EncryptBackup:         encryptBackup,
@@ -623,8 +734,8 @@ func (s *Server) renderSingleRow(w http.ResponseWriter, name string) {
 	cfg := s.cfgMgr.Get()
 	st, _ := s.stateMgr.Get(name)
 	row := TableRowData{
-		Router:    rc,
-		Effective: rc.Effective(cfg.Defaults),
+		Router:    sanitizeRouterConfig(rc),
+		Effective: sanitizeEffectiveConfig(rc.Effective(cfg.Defaults)),
 		State:     st,
 	}
 
@@ -654,8 +765,8 @@ func (s *Server) buildTableData() TableData {
 			}
 		}
 		items = append(items, TableRowData{
-			Router:    r,
-			Effective: r.Effective(cfg.Defaults),
+			Router:    sanitizeRouterConfig(r),
+			Effective: sanitizeEffectiveConfig(r.Effective(cfg.Defaults)),
 			State:     st,
 		})
 	}
@@ -778,7 +889,7 @@ func (s *Server) handleRouterBackupsModal(w http.ResponseWriter, r *http.Request
 	}
 
 	data := BackupsModalData{
-		Router:   rc,
+		Router:   sanitizeRouterConfig(rc),
 		RSC:      rsc,
 		Binaries: binaries,
 		HasFiles: len(backups) > 0,

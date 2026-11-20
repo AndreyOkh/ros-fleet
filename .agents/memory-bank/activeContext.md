@@ -2,6 +2,20 @@
 
 ## Current Status & Focus
 - **Последние изменения в проекте:**
+  - **Полное сокрытие всех секретов и паролей в Web UI (Zero-Leak Sensitive Data Protection):**
+    - Любые чувствительные данные: пароли устройств (`password`), пароли от приватных SSH-ключей (`private_key_passphrase`) и пароли шифрования бинарных бэкапов (`backup_password`) — как в общих настройках `defaults`, так и в индивидуальных `routers` — больше никогда не возвращаются и не выводятся в HTML-разметку или DOM веб-интерфейса (`value=""`, `autocomplete="new-password"`).
+    - В шаблонах `defaults_modal.html` и `router_modal.html`:
+      - Поля ввода всегда имеют `value=""` и атрибут `autocomplete="new-password"`.
+      - Если пароль задан индивидуально для роутера: отображается плейсхолдер `•••••••• (сохранен)` и подсказка с инструкцией (оставить пустым для сохранения, либо ввести `-` для сброса на defaults).
+      - Если пароль роутера наследуется из общих настроек: отображается плейсхолдер `•••••••• (из defaults)` и поясняющая подсказка.
+      - В настройках `defaults`: плейсхолдер `•••••••• (сохранен)` и подсказка об оставлении пустым для сохранения.
+    - В структурах `ModalData` и `DefaultsModalData` добавлены булевы флаги (`HasPassword`, `HasDefaultPassword`, `HasPrivateKeyPassphrase`, `HasDefaultPrivateKeyPassphrase`, `HasBackupPassword`, `HasDefaultBackupPassword`), а все поля паролей очищаются перед передачей в шаблоны.
+    - Реализована защитная очистка (defense-in-depth sanitization): функции `sanitizeRouterConfig`, `sanitizeEffectiveConfig` и `sanitizeDefaultsConfig` обнуляют пароли в структурах `TableRowData` и `BackupsModalData`, исключая случайную утечку при модификации шаблонов дашборда.
+    - В обработчиках `handleSaveDefaults` и `handleSaveRouter`:
+      - При отправке пустых полей при редактировании существующие секреты в конфигурации сохраняются и не затираются.
+      - При вводе нового значения пароль обновляется и атомарно сохраняется в `config.json`.
+      - При отправке `-` индивидуальный пароль роутера сбрасывается в `""`, возвращая устройство к наследованию из `defaults`.
+    - Добавлен исчерпывающий юнит-тест `TestSecretsNotLeakedInWebUIAndPreservedOnEdit` в `internal/web/server_test.go`, проверяющий защиту всех видов секретов во всех модальных окнах, строках таблицы и окне бэкапов.
   - **Встроенное шифрование веб-трафика (SSL/TLS / HTTPS) на базе стандартной библиотеки Go:**
     - Полная реализация HTTPS исключительно средствами стандартной библиотеки (`crypto/tls`, `crypto/x509`, `crypto/ecdsa`, `encoding/pem`, `net`, `bufio`), без сторонних зависимостей.
     - **Конфигурация и миграция схемы v2 -> v3 (`internal/config`):**

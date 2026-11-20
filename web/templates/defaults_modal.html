@@ -27,7 +27,8 @@
 
         <div class="form-group full-width">
           <label for="def_password">Пароль по умолчанию</label>
-          <input type="password" id="def_password" name="password" value="{{.Defaults.Password}}" placeholder="••••••••">
+          <input type="password" id="def_password" name="password" value="" autocomplete="new-password" placeholder="{{if .HasPassword}}•••••••• (сохранен){{else}}••••••••{{end}}">
+          <small class="form-hint text-muted">{{if .HasPassword}}Пароль сохранен в конфигурации. Оставьте пустым, чтобы не изменять.{{end}}</small>
         </div>
 
         <div class="form-group">
@@ -37,7 +38,8 @@
 
         <div class="form-group">
           <label for="def_private_key_passphrase">Пароль от ключа по умолчанию</label>
-          <input type="password" id="def_private_key_passphrase" name="private_key_passphrase" value="{{.Defaults.PrivateKeyPassphrase}}" placeholder="Опционально">
+          <input type="password" id="def_private_key_passphrase" name="private_key_passphrase" value="" autocomplete="new-password" placeholder="{{if .HasPrivateKeyPassphrase}}•••••••• (сохранен){{else}}Опционально{{end}}">
+          <small class="form-hint text-muted">{{if .HasPrivateKeyPassphrase}}Пароль сохранен. Оставьте пустым, чтобы не изменять.{{end}}</small>
         </div>
 
         <div class="form-group full-width">
@@ -65,7 +67,8 @@
 
         <div class="form-group full-width" id="def_backup_pwd_group" style="display: {{if .Defaults.EncryptBackup}}block{{else}}none{{end}};">
           <label for="def_backup_password">Пароль шифрования бэкапа по умолчанию</label>
-          <input type="password" id="def_backup_password" name="backup_password" value="{{.Defaults.BackupPassword}}" placeholder="Пароль для шифрования .backup">
+          <input type="password" id="def_backup_password" name="backup_password" value="" autocomplete="new-password" placeholder="{{if .HasBackupPassword}}•••••••• (сохранен){{else}}Пароль для шифрования .backup{{end}}">
+          <small class="form-hint text-muted">{{if .HasBackupPassword}}Пароль шифрования сохранен. Оставьте пустым, чтобы не изменять.{{end}}</small>
         </div>
       </div>
 

@@ -48,6 +48,13 @@
 - [x] **Автоматическое слияние расхождений Git (`Auto-Fetch & Merge on Diverged Remote`)**:
   - Реализованы `FetchAndMerge()` и `fetchAndMergeLocked()` с авто-восстановлением при несовпадении веток в `pushLocked`.
   - Безопасное слияние с `--allow-unrelated-histories` и `-X ours` (приоритет свежей конфигурации роутера при конфликтах).
+- [x] **Полное сокрытие всех секретов и паролей в Web UI (Zero-Leak Sensitive Data Protection)**:
+  - Любые чувствительные данные (пароли устройств `password`, пароли от приватных SSH-ключей `private_key_passphrase`, пароли шифрования бинарных бэкапов `backup_password`) как в глобальных `defaults`, так и в параметрах отдельных устройств `routers` больше никогда не выводятся в HTML DOM веб-интерфейса (`value=""`, `autocomplete="new-password"`).
+  - Интуитивные плейсхолдеры и подсказки: `•••••••• (сохранен)` при наличии сохраненного пароля, `•••••••• (из defaults)` при наследовании из defaults.
+  - Поддержка сохранения существующих секретов при отправке пустых полей при редактировании (не затираются).
+  - Поддержка явного сброса индивидуальных секретов на дефолтные через ввод `-`.
+  - Защитная очистка (defense-in-depth sanitization) структур `TableRowData` и `BackupsModalData` перед передачей в шаблоны.
+  - Исчерпывающий юнит-тест `TestSecretsNotLeakedInWebUIAndPreservedOnEdit` с проверкой всех сценариев.
 - [x] **Встроенное шифрование веб-трафика SSL/TLS (HTTPS) без сторонних зависимостей**:
   - Схема конфигурации v3 (`CurrentConfigVersion = 3`), миграция v2 -> v3 с бэкапом `.v2.bak` и уведомлением `MigrationNotice`.
   - Параметры `web.ssl_enabled` (`*bool`, по умолчанию `true`), `web.ssl_cert_file`, `web.ssl_key_file` и CLI-флаг `-ssl`.
@@ -59,6 +66,7 @@
   - 100% прохождение тестов под `-race`.
   - 100% покрытие unit-тестами (`TestGitDivergedRemoteAutoMergeAndPush`).
 - [x] **Переход на версию v2.2.0**: обновление `Makefile` и создание тега `v2.2.0`.
+- [x] **Переход на версию v2.4.0**: обновление `Makefile` (`VERSION ?= 2.4.0`) и создание тега `v2.4.0` с поддержкой Zero-Leak Sensitive Data Protection для всех учетных данных и паролей.
 - [x] **Автоматическая синхронизация прав томов Docker (`su-exec` & `docker-entrypoint.sh`)**:
   - Устранена проблема владения директориями бэкапов `root:root` при первом старте Docker Compose.
   - Входной скрипт `docker-entrypoint.sh` с `su-exec` проверяет и исправляет права смонтированных каталогов (`/app/backups`, `/app/state.json`, `/home/rosfleet`) и безопасно сбрасывает привилегии до `rosfleet`.
