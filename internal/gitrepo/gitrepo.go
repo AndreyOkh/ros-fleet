@@ -321,6 +321,62 @@ func (g *GitRepository) Push(ctx context.Context) error {
 	return g.pushLocked(ctx)
 }
 
+// FetchAndMerge fetches remote changes from origin and merges them into the current branch.
+func (g *GitRepository) FetchAndMerge(ctx context.Context) error {
+	if !g.cfg.Enabled {
+		return errors.New("git repository versioning is disabled")
+	}
+	if strings.TrimSpace(g.cfg.RemoteURL) == "" {
+		return errors.New("remote_url is not configured")
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	branch := g.cfg.Branch
+	if branch == "" {
+		branch = "main"
+	}
+
+	return g.fetchAndMergeLocked(ctx, branch)
+}
+
+func (g *GitRepository) fetchAndMergeLocked(ctx context.Context, branch string) error {
+	if err := g.ensureRepoLocked(ctx); err != nil {
+		return err
+	}
+
+	// 1. Fetch from remote
+	fetchOut, fetchErr := g.runGit(ctx, g.exportDir, "fetch", "origin", branch)
+	if fetchErr != nil {
+		return fmt.Errorf("git fetch origin %s failed: %w (output: %s)", branch, fetchErr, fetchOut)
+	}
+
+	// 2. Merge remote branch favoring local live router configs on conflict (-X ours)
+	remoteRef := "origin/" + branch
+	mergeMsg := fmt.Sprintf("backup: merge remote changes from %s", remoteRef)
+	mergeOut, mergeErr := g.runGit(ctx, g.exportDir, "merge", "--no-edit", "--allow-unrelated-histories", "-X", "ours", "-m", mergeMsg, remoteRef)
+	if mergeErr != nil {
+		// Clean up any incomplete merge state
+		_, _ = g.runGit(ctx, g.exportDir, "merge", "--abort")
+		return fmt.Errorf("git merge %s failed: %w (output: %s)", remoteRef, mergeErr, mergeOut)
+	}
+
+	// Update telemetry
+	hashOut, _ := g.runGit(ctx, g.exportDir, "rev-parse", "--short", "HEAD")
+	if strings.TrimSpace(hashOut) != "" {
+		g.status.LastCommitHash = strings.TrimSpace(hashOut)
+		g.status.LastCommitAt = time.Now()
+		g.status.LastCommitMsg = mergeMsg
+	}
+
+	g.logger.Info("Successfully merged remote changes into local export branch",
+		slog.String("branch", branch),
+		slog.String("remote_ref", remoteRef),
+	)
+	return nil
+}
+
 func (g *GitRepository) pushLocked(ctx context.Context) error {
 	if err := g.ensureRepoLocked(ctx); err != nil {
 		g.status.LastError = g.SanitizeOutput(err.Error())
@@ -332,7 +388,32 @@ func (g *GitRepository) pushLocked(ctx context.Context) error {
 		branch = "main"
 	}
 
-	if pushOut, pushErr := g.runGit(ctx, g.exportDir, "push", "-u", "origin", branch); pushErr != nil {
+	pushOut, pushErr := g.runGit(ctx, g.exportDir, "push", "-u", "origin", branch)
+	if pushErr != nil {
+		// If initial push failed, remote may contain commits that we do not have locally (diverged / non-fast-forward).
+		// Attempt auto-recovery: fetch from remote, merge into local branch, and retry push.
+		g.logger.Warn("Initial git push failed, attempting to fetch and merge remote changes...",
+			slog.String("branch", branch),
+			slog.String("output", g.SanitizeOutput(pushOut)),
+		)
+
+		if mergeErr := g.fetchAndMergeLocked(ctx, branch); mergeErr == nil {
+			g.logger.Info("Auto-merge of remote changes succeeded, retrying push...", slog.String("branch", branch))
+			retryOut, retryErr := g.runGit(ctx, g.exportDir, "push", "-u", "origin", branch)
+			if retryErr == nil {
+				g.status.LastPushAt = time.Now()
+				g.status.LastError = ""
+				g.status.Ahead = 0
+				g.status.NeedsPush = false
+				g.logger.Info("Successfully pushed configuration changes after auto-merging remote", slog.String("branch", branch))
+				return nil
+			}
+			pushOut = retryOut
+			pushErr = retryErr
+		} else {
+			g.logger.Warn("Failed to auto-merge remote changes during push recovery", slog.Any("error", mergeErr))
+		}
+
 		sanitizedErr := g.SanitizeOutput(fmt.Sprintf("push error: %s", pushOut))
 		g.status.LastError = sanitizedErr
 		g.status.NeedsPush = true

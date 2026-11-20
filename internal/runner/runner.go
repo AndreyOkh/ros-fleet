@@ -78,6 +78,26 @@ func (r *Runner) GitPush(ctx context.Context) error {
 	return repo.Push(ctx)
 }
 
+// GitFetchAndMerge explicitly pulls and merges remote changes into the local export branch.
+func (r *Runner) GitFetchAndMerge(ctx context.Context) error {
+	r.mu.Lock()
+	repo := r.gitRepo
+	r.mu.Unlock()
+
+	if repo == nil {
+		cfg := r.cfgMgr.Get()
+		if !cfg.Git.Enabled {
+			return errors.New("git repository versioning is disabled")
+		}
+		repo = gitrepo.New(cfg.ExportDir, cfg.Git, r.logger)
+		r.mu.Lock()
+		r.gitRepo = repo
+		r.mu.Unlock()
+	}
+
+	return repo.FetchAndMerge(ctx)
+}
+
 // Run executes the backup process for all enabled routers.
 func (r *Runner) Run(ctx context.Context) (notifier.SummaryReport, error) {
 	if !r.isRunning.CompareAndSwap(false, true) {

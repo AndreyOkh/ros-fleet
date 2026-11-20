@@ -45,6 +45,11 @@
   - `compose.yaml`: указание официального публичного образа `image: ghcr.io/andreyokh/ros-fleet:latest`.
   - `Makefile`: синхронизация `LDFLAGS` с пакетом `internal/version`.
   - `README.md`: документирование запуска из GHCR, пошаговых процедур обновления и автомиграции конфигурации.
+- [x] **Автоматическое слияние расхождений Git (`Auto-Fetch & Merge on Diverged Remote`)**:
+  - Реализованы `FetchAndMerge()` и `fetchAndMergeLocked()` с авто-восстановлением при несовпадении веток в `pushLocked`.
+  - Безопасное слияние с `--allow-unrelated-histories` и `-X ours` (приоритет свежей конфигурации роутера при конфликтах).
+  - 100% покрытие unit-тестами (`TestGitDivergedRemoteAutoMergeAndPush`).
+- [x] **Переход на версию v2.2.0**: обновление `Makefile` и создание тега `v2.2.0`.
 - [x] **Автоматическая синхронизация прав томов Docker (`su-exec` & `docker-entrypoint.sh`)**:
   - Устранена проблема владения директориями бэкапов `root:root` при первом старте Docker Compose.
   - Входной скрипт `docker-entrypoint.sh` с `su-exec` проверяет и исправляет права смонтированных каталогов (`/app/backups`, `/app/state.json`, `/home/rosfleet`) и безопасно сбрасывает привилегии до `rosfleet`.

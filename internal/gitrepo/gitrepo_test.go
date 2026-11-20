@@ -296,3 +296,93 @@ func TestGitPushWithLocalRemote(t *testing.T) {
 		t.Errorf("expected Ahead to be 0 after Push(), got %d", statusPushed.Ahead)
 	}
 }
+
+func TestGitDivergedRemoteAutoMergeAndPush(t *testing.T) {
+	tempDir := t.TempDir()
+	remoteBareDir := filepath.Join(tempDir, "remote.git")
+	clientADir := filepath.Join(tempDir, "clientA")
+	clientBDir := filepath.Join(tempDir, "clientB")
+
+	ctx := context.Background()
+
+	// 1. Initialize bare remote repository
+	repoInit := New(remoteBareDir, config.GitConfig{}, slog.Default())
+	if _, err := repoInit.runGit(ctx, tempDir, "init", "--bare", "-b", "main", remoteBareDir); err != nil {
+		t.Fatalf("failed to init bare remote: %v", err)
+	}
+
+	// 2. Client A sets up repository, adds RouterA.rsc and pushes to remote
+	cfgA := config.GitConfig{
+		Enabled:     true,
+		Branch:      "main",
+		RemoteURL:   remoteBareDir,
+		AuthorName:  "Client A",
+		AuthorEmail: "a@local",
+		AutoPush:    true,
+	}
+	repoA := New(clientADir, cfgA, slog.Default())
+	_ = os.MkdirAll(clientADir, 0o755)
+	if err := os.WriteFile(filepath.Join(clientADir, "RouterA.rsc"), []byte("/system identity set name=RouterA\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := repoA.CommitAndPush(ctx); err != nil || !ok {
+		t.Fatalf("client A CommitAndPush failed: %v", err)
+	}
+
+	// 3. Client B sets up separate repository, adds RouterB.rsc and commits locally WITHOUT pushing
+	cfgB := config.GitConfig{
+		Enabled:     true,
+		Branch:      "main",
+		RemoteURL:   remoteBareDir,
+		AuthorName:  "Client B",
+		AuthorEmail: "b@local",
+		AutoPush:    false,
+	}
+	repoB := New(clientBDir, cfgB, slog.Default())
+	_ = os.MkdirAll(clientBDir, 0o755)
+	if err := os.WriteFile(filepath.Join(clientBDir, "RouterB.rsc"), []byte("/system identity set name=RouterB\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := repoB.CommitAndPush(ctx); err != nil || !ok {
+		t.Fatalf("client B CommitAndPush failed: %v", err)
+	}
+
+	// 4. Client A adds another commit (RouterA_v2.rsc) and pushes to remote
+	if err := os.WriteFile(filepath.Join(clientADir, "RouterA_v2.rsc"), []byte("/system identity set name=RouterA2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repoA.cfg.AutoPush = true
+	if ok, err := repoA.CommitAndPush(ctx); err != nil || !ok {
+		t.Fatalf("client A second CommitAndPush failed: %v", err)
+	}
+
+	// At this point, Client B and Remote have diverged histories.
+	// 5. Client B attempts Push(), which should auto-recover by fetching, merging and pushing
+	if err := repoB.Push(ctx); err != nil {
+		t.Fatalf("client B Push() with auto-merge failed: %v", err)
+	}
+
+	statusB := repoB.GetStatus()
+	if statusB.NeedsPush {
+		t.Errorf("expected NeedsPush to be false for client B after auto-merge push, got true")
+	}
+	if statusB.Ahead != 0 {
+		t.Errorf("expected Ahead to be 0 for client B, got %d", statusB.Ahead)
+	}
+	if statusB.LastError != "" {
+		t.Errorf("expected no error for client B, got %q", statusB.LastError)
+	}
+
+	// 6. Verify client B now has RouterA.rsc and RouterA_v2.rsc from remote
+	if _, err := os.Stat(filepath.Join(clientBDir, "RouterA.rsc")); err != nil {
+		t.Errorf("expected RouterA.rsc to be merged into client B: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(clientBDir, "RouterA_v2.rsc")); err != nil {
+		t.Errorf("expected RouterA_v2.rsc to be merged into client B: %v", err)
+	}
+
+	// 7. Verify standalone FetchAndMerge method works
+	if err := repoB.FetchAndMerge(ctx); err != nil {
+		t.Errorf("explicit FetchAndMerge failed: %v", err)
+	}
+}

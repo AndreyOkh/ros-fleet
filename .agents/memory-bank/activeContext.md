@@ -2,6 +2,19 @@
 
 ## Current Status & Focus
 - **Последние изменения в проекте:**
+  - **Автоматическое получение, слияние и отправка при расхождении Git-репозитория (Auto-Fetch & Merge on Diverged Remote):**
+    - В `internal/gitrepo` реализован механизм автоматического восстановления при несовпадении локального и удаленного репозиториев (non-fast-forward / diverged history / fetch first):
+      - Добавлен метод `FetchAndMerge(ctx context.Context) error` и внутренняя функция `fetchAndMergeLocked(ctx, branch)`:
+        - Выполняет `git fetch origin <branch>`.
+        - Выполняет `git merge --no-edit --allow-unrelated-histories -X ours -m "backup: merge remote changes from origin/<branch>" origin/<branch>`.
+        - При возникновении конфликтов ключ `-X ours` автоматически отдает приоритет актуальной конфигурации с живого роутера, гарантируя отсутствие зависаний и интерактивных запросов.
+        - При сбое слияния выполняется автоматический `git merge --abort` для сохранения чистой рабочей директории.
+      - В `pushLocked` добавлена авто-компенсация: при отклонении начального `git push` сервис логирует предупреждение, автоматически вызывает `fetchAndMergeLocked` и производит повторную отправку (`retry push`).
+      - В `internal/runner` добавлен прокси-метод `GitFetchAndMerge(ctx context.Context) error`.
+      - Написан юнит-тест `TestGitDivergedRemoteAutoMergeAndPush` в `internal/gitrepo/gitrepo_test.go`, эмулирующий параллельные коммиты двух клиентов и подтверждающий успешное слияние и отправку.
+  - **Переход на версию v2.2.0 (SemVer Minor Release):**
+    - В `Makefile` обновлена версия: `VERSION ?= 2.2.0`.
+    - Добавлен git-тег `v2.2.0`.
   - **Автоматическая синхронизация прав доступа к томам Docker (su-exec & docker-entrypoint.sh):**
     - Выявлена причина ошибки при первом запуске в Docker Compose:
       - При bind-mount каталогов (`./backups`, `./backups/binary`, `./backups/exports`), если они не существовали на хосте, демон Docker (`dockerd`, работающий от `root`) создавал их с владельцем `root:root` и правами `0755`.

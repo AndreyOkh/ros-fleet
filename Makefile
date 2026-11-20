@@ -1,7 +1,7 @@
 .PHONY: all build build-static test clean
 
 APP_NAME := ros-fleet
-VERSION ?= 2.1.0
+VERSION ?= 2.2.0
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "manual")
 DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -s -w \
