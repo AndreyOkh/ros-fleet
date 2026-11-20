@@ -136,13 +136,15 @@ services:
     volumes:
       - ./config.json:/app/config.json:rw
       - ./state.json:/app/state.json:rw
-      - ./backups/binary:/app/backups/binary:rw
-      - ./backups/exports:/app/backups/exports:rw
+      - ./backups:/app/backups:rw
       # SSH-ключи для доступа к роутерам и Git push
       - ~/.ssh/id_ed25519:/home/rosfleet/.ssh/id_ed25519:ro
       - ~/.ssh/known_hosts:/home/rosfleet/.ssh/known_hosts:ro
     environment:
       - TZ=Europe/Moscow
+      # Опционально: UID/GID хоста для автоматической синхронизации прав на бэкапы
+      - PUID=1000
+      - PGID=1000
     command: ["-config", "/app/config.json"]
 ```
 
@@ -313,6 +315,7 @@ docker run -d \
 ```bash
 # Клонируйте репозиторий или скачайте compose.yaml и config.example.json
 cp config.example.json config.json
+touch state.json
 
 # Запустите сервис в фоне
 docker compose up -d
@@ -320,6 +323,11 @@ docker compose up -d
 # Просмотр логов
 docker compose logs -f
 ```
+
+> [!TIP]
+> **Автоматическая настройка прав доступа к каталогам бэкапов:**
+> Контейнер использует встроенный скрипт инициализации с `su-exec`. При первом запуске сервис автоматически проверяет владельца смонтированных директорий (`backups`, `backups/binary`, `backups/exports`, `state.json`) и передает права непривилегированному пользователю `rosfleet` (UID:GID `1000:1000`), после чего сбрасывает привилегии `root`.
+> Если на хосте используется пользователь с другим UID/GID, передайте переменные окружения `PUID` и `PGID` в `compose.yaml` (например, `PUID=1001`, `PGID=1001`).
 
 ---
 

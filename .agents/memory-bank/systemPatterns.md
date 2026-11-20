@@ -46,3 +46,8 @@ internal/
 7. **CI/CD и контейнеризация (GitHub Actions & Multi-Arch Docker):**
    - Единый CI-пайплайн (`ci.yml`) с проверкой `go vet`, `go test -race`, статической компиляции и сборки Dockerfile с Buildx.
    - Релизный пайплайн (`release.yml`) по тегам `v*`: компиляция CGO_ENABLED=0 для `amd64` и `arm64`, жесткое именование архивов `ros-fleet_${VERSION}_linux_${ARCH}.tar.gz` (с сохранением префикса `v`), генерация `sha256sums.txt`, публикация GitHub Release и публикация multi-arch Docker-образа в GHCR со строго строчным именем репозитория (`ghcr.io/andreyokh/ros-fleet`).
+8. **Автоматическое управление правами доступа в Docker (`su-exec` & `docker-entrypoint.sh`):**
+   - Контейнер стартует входной скрипт `/usr/local/bin/docker-entrypoint.sh` под `root` (UID 0), проверяет смонтированные тома (`/app/backups`, `/app/backups/binary`, `/app/backups/exports`, `/app/state.json`, `/home/rosfleet`) и, если они были автоматически созданы демоном Docker с владельцем `root:root`, выполняет `chown -R` на целевой UID/GID.
+   - Поддерживает переменные `PUID`/`PGID` (по умолчанию `1000:1000`) для бесшовной интеграции с правами пользователя на хосте.
+   - Сбрасывает привилегии `root` через легковесный Alpine инструмент `su-exec` перед выполнением бинарника `ros-fleet`.
+   - Если контейнер запущен сразу под непривилегированным пользователем (например, Kubernetes `runAsNonRoot: true`), скрипт пропускает шаг `chown` и запускает процесс напрямую через `exec "$@"`.

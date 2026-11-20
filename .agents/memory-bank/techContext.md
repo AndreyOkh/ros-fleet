@@ -8,7 +8,7 @@
 - **Интеграция с Git:** Системный бинарник `git` без CGO.
 - **Версионирование и сборка:** `runtime/debug.ReadBuildInfo()` + `-ldflags` overrides в `internal/version`.
 - **Движок обновлений:** Stdlib (`net/http`, `archive/tar`, `compress/gzip`, `crypto/sha256`) в `internal/updater`.
-- **Контейнеризация:** Multi-stage Dockerfile (`ARG TARGETOS`, `ARG TARGETARCH`, `ENV DOCKER_CONTAINER=1`), Docker Compose (`compose.yaml` с `ghcr.io/andreyokh/ros-fleet:latest`).
+- **Контейнеризация:** Multi-stage Dockerfile (`ARG TARGETOS`, `ARG TARGETARCH`, `ENV DOCKER_CONTAINER=1`), Docker Compose (`compose.yaml` с `ghcr.io/andreyokh/ros-fleet:latest`), скрипт инициализации `docker-entrypoint.sh` с автоматическим исправлением прав томов через `su-exec` (поддержка `PUID`/`PGID`).
 - **CI/CD:** GitHub Actions (`.github/workflows/ci.yml`, `.github/workflows/release.yml`) для статических бинарников `linux/amd64`, `linux/arm64`, архивов `tar.gz` и multi-arch образов GHCR (`ghcr.io/andreyokh/ros-fleet`).
 - **Демонизация:** `ros-fleet.service` (Systemd unit).
 
