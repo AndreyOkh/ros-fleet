@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -329,8 +330,9 @@ func TestConfigMigration_V1toV2_ByteVerbatimBackup(t *testing.T) {
 	if strings.Contains(diskContent, `"backup_dir"`) {
 		t.Errorf("migrated config on disk should not contain 'backup_dir', but found it:\n%s", diskContent)
 	}
-	if !strings.Contains(diskContent, `"config_version": 2`) {
-		t.Errorf("migrated config on disk should contain 'config_version': 2, but found:\n%s", diskContent)
+	expectedVersionStr := fmt.Sprintf(`"config_version": %d`, CurrentConfigVersion)
+	if !strings.Contains(diskContent, expectedVersionStr) {
+		t.Errorf("migrated config on disk should contain %q, but found:\n%s", expectedVersionStr, diskContent)
 	}
 
 	// 3. Verify MigrationNotice
@@ -441,9 +443,9 @@ func TestConfigUnknownKeysCollection(t *testing.T) {
 	tempDir := t.TempDir()
 	cfgFile := filepath.Join(tempDir, "config.json")
 
-	// v2 config with multiple unknown keys across top-level and nested structs
-	v2WithUnknown := `{
-  "config_version": 2,
+	// v3 config with multiple unknown keys across top-level and nested structs
+	v3WithUnknown := fmt.Sprintf(`{
+  "config_version": %d,
   "bogus_top": "unexpected",
   "another_bogus": 123,
   "backup_dir": "/legacy/should_be_flagged_in_v2",
@@ -464,8 +466,8 @@ func TestConfigUnknownKeysCollection(t *testing.T) {
       "bad_router_opt": "invalid"
     }
   ]
-}`
-	if err := os.WriteFile(cfgFile, []byte(v2WithUnknown), 0o600); err != nil {
+}`, CurrentConfigVersion)
+	if err := os.WriteFile(cfgFile, []byte(v3WithUnknown), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -479,7 +481,7 @@ func TestConfigUnknownKeysCollection(t *testing.T) {
 		t.Fatalf("expected MigrationNotice for unknown keys, got nil")
 	}
 	if notice.Migrated {
-		t.Errorf("notice.Migrated should be false for version 2 config")
+		t.Errorf("notice.Migrated should be false for version %d config", CurrentConfigVersion)
 	}
 
 	expectedKeys := []string{

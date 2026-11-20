@@ -30,8 +30,8 @@ func TestTier4_TC01_FullUpgradeLifecycle(t *testing.T) {
 
 	h.AssertFileExists(cfgPath + ".v1.bak")
 	_, rawDisk := h.ReadConfigFile(cfgPath)
-	if v, ok := rawDisk["config_version"].(float64); !ok || int(v) != 2 {
-		t.Fatalf("expected migrated config_version 2, got: %v", rawDisk["config_version"])
+	if v, ok := rawDisk["config_version"].(float64); !ok || int(v) != config.CurrentConfigVersion {
+		t.Fatalf("expected migrated config_version %d, got: %v", config.CurrentConfigVersion, rawDisk["config_version"])
 	}
 
 	// 2. Phase 3: Web UI Dashboard Notice & Dismissal
@@ -253,8 +253,8 @@ func TestTier4_TC04_MultiVersionConfigEvolution_IdempotentRestartCycle(t *testin
 	}
 
 	_, raw1 := h.ReadConfigFile(cfgPath)
-	if v, ok := raw1["config_version"].(float64); !ok || int(v) != 2 {
-		t.Fatalf("expected config_version 2 after Run 1, got: %v", raw1["config_version"])
+	if v, ok := raw1["config_version"].(float64); !ok || int(v) != config.CurrentConfigVersion {
+		t.Fatalf("expected config_version %d after Run 1, got: %v", config.CurrentConfigVersion, raw1["config_version"])
 	}
 
 	// Run 2: Idempotent reboot
@@ -263,6 +263,7 @@ func TestTier4_TC04_MultiVersionConfigEvolution_IdempotentRestartCycle(t *testin
 		t.Fatalf("Run 2 failed: %v, output: %s", res2.Err, res2.CombinedOutput)
 	}
 
+	h.AssertFileNotExists(cfgPath + ".v3.bak")
 	h.AssertFileNotExists(cfgPath + ".v2.bak")
 	bakInfo2, err := os.Stat(bakPath)
 	if err != nil {
@@ -273,10 +274,10 @@ func TestTier4_TC04_MultiVersionConfigEvolution_IdempotentRestartCycle(t *testin
 	}
 
 	// Run 3: Future version rejection
-	h.CreateIncompatibleConfig("config_evolution.json", 3)
+	h.CreateIncompatibleConfig("config_evolution.json", 4)
 	res3 := h.RunCLI(CLIOptions{Args: []string{"-config=" + cfgPath, "-once"}, Timeout: 3 * time.Second})
 	if res3.ExitCode != 1 {
-		t.Fatalf("expected Run 3 exit code 1 on config_version 3, got %d (err: %v)", res3.ExitCode, res3.Err)
+		t.Fatalf("expected Run 3 exit code 1 on config_version 4, got %d (err: %v)", res3.ExitCode, res3.Err)
 	}
 	if res3.Duration >= 2*time.Second {
 		t.Fatalf("process hung for %v instead of fast abort (< 2s)", res3.Duration)
@@ -284,6 +285,7 @@ func TestTier4_TC04_MultiVersionConfigEvolution_IdempotentRestartCycle(t *testin
 	if !strings.Contains(res3.CombinedOutput, "unsupported configuration version") && !strings.Contains(res3.CombinedOutput, "config_version") {
 		t.Fatalf("missing descriptive error: %s", res3.CombinedOutput)
 	}
+	h.AssertFileNotExists(cfgPath + ".v4.bak")
 	h.AssertFileNotExists(cfgPath + ".v3.bak")
 }
 
@@ -380,7 +382,7 @@ func TestTier4_TC07_ResilientAtomicRollback_ConfigWriteFailure(t *testing.T) {
 	}
 
 	target := filepath.Join(dir, "config.json")
-	originalJSON := `{"config_version": 2, "binary_backup_dir": "/var/backups/bin", "export_dir": "/var/backups/exp", "state_file": "./state.json", "retention_days": 30, "defaults": {"port": 22, "user": "admin", "password": "default_password"}, "routers": [{"name": "r1", "host": "192.168.1.1", "user": "admin", "password": "default_password"}]}`
+	originalJSON := fmt.Sprintf(`{"config_version": %d, "binary_backup_dir": "/var/backups/bin", "export_dir": "/var/backups/exp", "state_file": "./state.json", "retention_days": 30, "defaults": {"port": 22, "user": "admin", "password": "default_password"}, "routers": [{"name": "r1", "host": "192.168.1.1", "user": "admin", "password": "default_password"}]}`, config.CurrentConfigVersion)
 	if err := os.WriteFile(target, []byte(originalJSON), 0o600); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}

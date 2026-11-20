@@ -2,19 +2,35 @@
 
 ## Current Status & Focus
 - **Последние изменения в проекте:**
-  - **Автоматическое получение, слияние и отправка при расхождении Git-репозитория (Auto-Fetch & Merge on Diverged Remote):**
-    - В `internal/gitrepo` реализован механизм автоматического восстановления при несовпадении локального и удаленного репозиториев (non-fast-forward / diverged history / fetch first):
-      - Добавлен метод `FetchAndMerge(ctx context.Context) error` и внутренняя функция `fetchAndMergeLocked(ctx, branch)`:
-        - Выполняет `git fetch origin <branch>`.
-        - Выполняет `git merge --no-edit --allow-unrelated-histories -X ours -m "backup: merge remote changes from origin/<branch>" origin/<branch>`.
-        - При возникновении конфликтов ключ `-X ours` автоматически отдает приоритет актуальной конфигурации с живого роутера, гарантируя отсутствие зависаний и интерактивных запросов.
-        - При сбое слияния выполняется автоматический `git merge --abort` для сохранения чистой рабочей директории.
-      - В `pushLocked` добавлена авто-компенсация: при отклонении начального `git push` сервис логирует предупреждение, автоматически вызывает `fetchAndMergeLocked` и производит повторную отправку (`retry push`).
-      - В `internal/runner` добавлен прокси-метод `GitFetchAndMerge(ctx context.Context) error`.
-      - Написан юнит-тест `TestGitDivergedRemoteAutoMergeAndPush` в `internal/gitrepo/gitrepo_test.go`, эмулирующий параллельные коммиты двух клиентов и подтверждающий успешное слияние и отправку.
-  - **Переход на версию v2.2.0 (SemVer Minor Release):**
-    - В `Makefile` обновлена версия: `VERSION ?= 2.2.0`.
-    - Добавлен git-тег `v2.2.0`.
+  - **Встроенное шифрование веб-трафика (SSL/TLS / HTTPS) на базе стандартной библиотеки Go:**
+    - Полная реализация HTTPS исключительно средствами стандартной библиотеки (`crypto/tls`, `crypto/x509`, `crypto/ecdsa`, `encoding/pem`, `net`, `bufio`), без сторонних зависимостей.
+    - **Конфигурация и миграция схемы v2 -> v3 (`internal/config`):**
+      - `CurrentConfigVersion` поднят с `2` до `3`.
+      - В структуру `WebConfig` добавлены поля `SSLEnabled` (`*bool`, по умолчанию `true`), `SSLCertFile` (`string`), `SSLKeyFile` (`string`).
+      - Реализован мигратор `migrateV2ToV3` (создание резервной копии `.v2.bak` с правами `0600`, включение `web.ssl_enabled = true`, фиксация сообщения в `MigrationNotice`).
+      - В `Config.Validate()` добавлена строгая проверка: если указан только один из путей сертификата (`ssl_cert_file` или `ssl_key_file`), приложение возвращает понятную ошибку запуска без перезаписи файла.
+      - В `ConfigManager` добавлены методы `OverrideSSLEnabled(bool)`, `UpdateWebCertFiles(cert, key)` (атомарное сохранение путей на диск) и геттеры `IsSSLEnabled()`.
+    - **CLI-флаг `-ssl` (`cmd/ros-fleet`):**
+      - Добавлен флаг `-ssl` (тип `bool`, по умолчанию `true`), проверяемый через `flag.Visit` для явного переопределения настройки `web.ssl_enabled` из файла конфигурации.
+    - **Автогенерация сертификата (`internal/web/tls.go`):**
+      - При `ssl_enabled == true` и пустых путях автоматически генерируется самоподписанный ECDSA-сертификат (P-256) сроком на 10 лет.
+      - В SAN (Subject Alternative Names) включаются `localhost`, `os.Hostname()`, `127.0.0.1`, `::1` и все найденные локальные IPv4/IPv6 адреса хоста.
+      - Файлы сохраняются в каталог `certs` рядом с конфигурацией (`ros-fleet.crt` 0644, `ros-fleet.key` 0600), а пути сохраняются в `config.json` через `ConfigManager`.
+    - **Принудительный HTTPS и авторедирект на едином порту (`internal/web`):**
+      - Минимальная версия TLS ограничена `tls.VersionTLS12`.
+      - Реализован мультиплексирующий сетевой слушатель `splitListener` над `net.Listener` с чтением сигнатуры `Peek(1)`:
+        - Байт `0x16` (TLS Handshake) направляется в `tls.Server`.
+        - Открытый HTTP-запрос перенаправляется ответом `HTTP/1.1 308 Permanent Redirect` на `https://<Host><RequestURI>` с закрытием соединения.
+      - Добавлено middleware `hstsMiddleware`, выставляющее заголовок `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+      - В Web UI отсутствуют переключатели SSL (управление только через конфиг/CLI).
+      - Приложение при старте корректно логирует префикс `https://...` (или `http://...` при явном выключении).
+    - **Обновление Docker и документации:**
+      - `compose.yaml`: добавлен том `- ./certs:/app/certs:rw`.
+      - `Dockerfile` и `docker-entrypoint.sh`: каталог `/app/certs` включен в автосоздание и проверку прав `su-exec`.
+      - `README.md`: документирован HTTPS по умолчанию, автогенерация, 308 редирект, собственные сертификаты и отключение для reverse proxy.
+    - **Тестирование:**
+      - Написаны юнит-тесты `internal/config/migrate_test.go` и `internal/web/tls_test.go`.
+      - Адаптированы E2E тесты в `test/e2e`. Полный набор тестов `go test -count=1 -race ./...` проходит со 100% успехом.
   - **Автоматическая синхронизация прав доступа к томам Docker (su-exec & docker-entrypoint.sh):**
     - Выявлена причина ошибки при первом запуске в Docker Compose:
       - При bind-mount каталогов (`./backups`, `./backups/binary`, `./backups/exports`), если они не существовали на хосте, демон Docker (`dockerd`, работающий от `root`) создавал их с владельцем `root:root` и правами `0755`.

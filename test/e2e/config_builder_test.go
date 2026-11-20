@@ -136,7 +136,46 @@ func (h *Harness) CreateV2Config(name string) string {
 	return target
 }
 
-// CreateIncompatibleConfig generates a configuration with config_version > CurrentConfigVersion (e.g. 3).
+// CreateV3Config generates a valid v3 configuration with config_version = 3.
+func (h *Harness) CreateV3Config(name string) string {
+	if name == "" {
+		name = "config.json"
+	}
+	target := filepath.Join(h.TempDir, name)
+
+	cfg := map[string]any{
+		"config_version":    3,
+		"binary_backup_dir": filepath.Join(h.TempDir, "backups", "binary"),
+		"export_dir":        filepath.Join(h.TempDir, "backups", "exports"),
+		"state_file":        filepath.Join(h.TempDir, "state.json"),
+		"defaults": map[string]any{
+			"port":     22,
+			"user":     "admin",
+			"password": "default_password",
+		},
+		"schedule": map[string]any{
+			"times":    []string{"03:00"},
+			"timezone": "UTC",
+		},
+		"web": map[string]any{
+			"enabled":     true,
+			"listen_addr": "127.0.0.1:0",
+			"ssl_enabled": true,
+		},
+		"routers": []map[string]any{
+			{
+				"name":     "Router-V3",
+				"host":     "192.168.3.1",
+				"user":     "admin",
+				"password": "default_password",
+			},
+		},
+	}
+	h.WriteJSONFile(target, cfg)
+	return target
+}
+
+// CreateIncompatibleConfig generates a configuration with config_version > CurrentConfigVersion (e.g. 4).
 func (h *Harness) CreateIncompatibleConfig(name string, version int) string {
 	if name == "" {
 		name = "config.json"

@@ -1,5 +1,8 @@
 bin/
 backups/
+certs/
+*.crt
+*.key
 config.json
 state.json
 git-configs/

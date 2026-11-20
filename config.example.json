@@ -1,5 +1,5 @@
 {
-  "config_version": 2,
+  "config_version": 3,
   "binary_backup_dir": "./backups/binary",
   "export_dir": "./backups/exports",
   "state_file": "./state.json",
@@ -37,7 +37,10 @@
     "enabled": true,
     "listen_addr": ":8080",
     "auth_user": "admin",
-    "auth_password": ""
+    "auth_password": "",
+    "ssl_enabled": true,
+    "ssl_cert_file": "",
+    "ssl_key_file": ""
   },
   "telegram": {
     "enabled": false,

@@ -11,6 +11,7 @@ services:
     volumes:
       - ./config.json:/app/config.json:rw
       - ./state.json:/app/state.json:rw
+      - ./certs:/app/certs:rw
       - ./backups:/app/backups:rw
       # SSH keys and known_hosts for router connections and Git remote auto_push
 #      - ~/.ssh/id_ed25519:/home/rosfleet/.ssh/id_ed25519:ro

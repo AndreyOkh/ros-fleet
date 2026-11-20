@@ -25,10 +25,10 @@ if [ "$1" = "ros-fleet" ] || [ "$1" = "/usr/local/bin/ros-fleet" ]; then
         fi
 
         # Ensure required directories exist
-        mkdir -p /app/backups/binary /app/backups/exports /home/rosfleet/.ssh
+        mkdir -p /app/backups/binary /app/backups/exports /app/certs /home/rosfleet/.ssh
 
-        # Fix ownership of backups directory and subdirectories if needed
-        for dir in /app/backups /app/backups/binary /app/backups/exports; do
+        # Fix ownership of backups and certs directories if needed
+        for dir in /app/backups /app/backups/binary /app/backups/exports /app/certs; do
             if [ -d "$dir" ]; then
                 dir_owner=$(stat -c '%u:%g' "$dir" 2>/dev/null || echo "")
                 if [ "$dir_owner" != "${PUID}:${PGID}" ]; then

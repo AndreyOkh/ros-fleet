@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -41,7 +42,6 @@ type RunningDaemon struct {
 // StartDaemon launches ros-fleet in daemon mode with web server enabled.
 func (h *Harness) StartDaemon(configPath string, extraEnv ...string) *RunningDaemon {
 	port := GetFreePort(h.T)
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	// Update config file's web.listen_addr to 127.0.0.1:<port>
 	_, rawMap := h.ReadConfigFile(configPath)
@@ -53,6 +53,12 @@ func (h *Harness) StartDaemon(configPath string, extraEnv ...string) *RunningDae
 	webSection["listen_addr"] = fmt.Sprintf("127.0.0.1:%d", port)
 	rawMap["web"] = webSection
 	h.WriteJSONFile(configPath, rawMap)
+
+	scheme := "https"
+	if ssl, ok := webSection["ssl_enabled"].(bool); ok && !ssl {
+		scheme = "http"
+	}
+	baseURL := fmt.Sprintf("%s://127.0.0.1:%d", scheme, port)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, h.BinPath, "-config", configPath)
@@ -86,7 +92,12 @@ func (h *Harness) StartDaemon(configPath string, extraEnv ...string) *RunningDae
 	// Poll readiness endpoint
 	ready := false
 	deadline := time.Now().Add(5 * time.Second)
-	client := &http.Client{Timeout: 500 * time.Millisecond}
+	client := &http.Client{
+		Timeout: 500 * time.Millisecond,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(baseURL + "/")
@@ -142,7 +153,12 @@ func (d *RunningDaemon) Stop() {
 }
 
 func (d *RunningDaemon) Client() *http.Client {
-	return &http.Client{Timeout: 5 * time.Second}
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 }
 
 func (d *RunningDaemon) Get(path string) (*http.Response, string) {

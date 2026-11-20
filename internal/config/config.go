@@ -17,7 +17,7 @@ import (
 )
 
 // CurrentConfigVersion is the current configuration schema version.
-const CurrentConfigVersion = 2
+const CurrentConfigVersion = 3
 
 // Config represents the application configuration.
 type Config struct {
@@ -75,6 +75,17 @@ type WebConfig struct {
 	ListenAddr   string `json:"listen_addr"`
 	AuthUser     string `json:"auth_user,omitempty"`
 	AuthPassword string `json:"auth_password,omitempty"`
+	SSLEnabled   *bool  `json:"ssl_enabled,omitempty"`
+	SSLCertFile  string `json:"ssl_cert_file,omitempty"`
+	SSLKeyFile   string `json:"ssl_key_file,omitempty"`
+}
+
+// IsSSLEnabled reports whether SSL/TLS encryption is enabled for the web dashboard (defaults to true).
+func (w WebConfig) IsSSLEnabled() bool {
+	if w.SSLEnabled == nil {
+		return true
+	}
+	return *w.SSLEnabled
 }
 
 // TelegramConfig holds settings for Telegram notifications.
@@ -94,7 +105,7 @@ type UpdatesConfig struct {
 // IsUpdateCheckEnabled reports whether automatic update checks are enabled.
 // By default, update checks are enabled unless explicitly disabled via
 // updates.enabled = false or check_updates = false.
-func (c *Config) IsUpdateCheckEnabled() bool {
+func (c Config) IsUpdateCheckEnabled() bool {
 	if c.CheckUpdates != nil && !*c.CheckUpdates {
 		return false
 	}
@@ -102,6 +113,11 @@ func (c *Config) IsUpdateCheckEnabled() bool {
 		return false
 	}
 	return true
+}
+
+// IsSSLEnabled reports whether SSL/TLS encryption is enabled for the web dashboard (defaults to true).
+func (c Config) IsSSLEnabled() bool {
+	return c.Web.IsSSLEnabled()
 }
 
 // RouterConfig contains connection settings for a single MikroTik device.
@@ -304,22 +320,19 @@ func loadAndMigrate(path string) (*Config, *MigrationNotice, error) {
 			return nil, nil, fmt.Errorf("failed to create config backup %q: %w", backupPath, err)
 		}
 
-		// Migrate deprecated fields
-		if strings.TrimSpace(cfg.BackupDir) != "" {
-			if strings.TrimSpace(cfg.BinaryBackupDir) == "" {
-				cfg.BinaryBackupDir = filepath.Join(cfg.BackupDir, "binary")
-			}
-			if strings.TrimSpace(cfg.ExportDir) == "" {
-				cfg.ExportDir = filepath.Join(cfg.BackupDir, "exports")
-			}
-			cfg.BackupDir = ""
+		// Sequential schema migrations
+		if version < 2 {
+			migrateV1ToV2(&cfg)
+		}
+		if version < 3 {
+			migrateV2ToV3(&cfg)
 		}
 
 		cfg.ConfigVersion = CurrentConfigVersion
 		cfg.applyDefaults()
 
 		// Unknown field detection (exclude backup_dir during v1 migration)
-		unknownKeys := findUnknownKeys(raw, reflect.TypeOf(Config{}), "", true)
+		unknownKeys := findUnknownKeys(raw, reflect.TypeOf(Config{}), "", version < 2)
 		sort.Strings(unknownKeys)
 
 		if len(unknownKeys) > 0 {
@@ -333,7 +346,7 @@ func loadAndMigrate(path string) (*Config, *MigrationNotice, error) {
 			return nil, nil, fmt.Errorf("invalid configuration: %w", err)
 		}
 
-		// Atomically persist updated v2 config to disk
+		// Atomically persist updated config to disk
 		if err := saveConfigToDisk(cleanPath, &cfg); err != nil {
 			return nil, nil, fmt.Errorf("failed to save migrated configuration to %q: %w", cleanPath, err)
 		}
@@ -345,6 +358,9 @@ func loadAndMigrate(path string) (*Config, *MigrationNotice, error) {
 		)
 
 		msg := fmt.Sprintf("Конфигурация автоматически обновлена с версии %d до %d. Резервная копия: %s.", version, CurrentConfigVersion, filepath.Base(backupPath))
+		if version < 3 {
+			msg += " Включено безопасное шифрование веб-трафика (web.ssl_enabled = true)."
+		}
 		notice = &MigrationNotice{
 			Migrated:    true,
 			OldVersion:  version,
@@ -489,6 +505,10 @@ func (c *Config) applyDefaults() {
 	if strings.TrimSpace(c.Web.ListenAddr) == "" {
 		c.Web.ListenAddr = ":8080"
 	}
+	if c.Web.SSLEnabled == nil {
+		defaultSSL := true
+		c.Web.SSLEnabled = &defaultSSL
+	}
 	if strings.TrimSpace(c.Git.Branch) == "" {
 		c.Git.Branch = "main"
 	}
@@ -531,6 +551,14 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.ExportDir) == "" {
 		errs = append(errs, "'export_dir' must not be empty")
+	}
+
+	if c.IsSSLEnabled() {
+		hasCert := strings.TrimSpace(c.Web.SSLCertFile) != ""
+		hasKey := strings.TrimSpace(c.Web.SSLKeyFile) != ""
+		if (hasCert && !hasKey) || (!hasCert && hasKey) {
+			errs = append(errs, "both 'web.ssl_cert_file' and 'web.ssl_key_file' must be specified when custom SSL certificates are configured")
+		}
 	}
 
 	if len(c.Routers) == 0 {
@@ -638,6 +666,30 @@ func NewManager(path string) (*Manager, error) {
 	}, nil
 }
 
+// Path returns the configuration file path on disk.
+func (m *Manager) Path() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.path
+}
+
+// OverrideSSLEnabled overrides the SSL enabled setting in memory (e.g. from CLI flag).
+func (m *Manager) OverrideSSLEnabled(val bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b := val
+	m.cfg.Web.SSLEnabled = &b
+}
+
+// UpdateWebCertFiles updates SSL certificate and private key paths and saves config to disk.
+func (m *Manager) UpdateWebCertFiles(certFile, keyFile string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.Web.SSLCertFile = certFile
+	m.cfg.Web.SSLKeyFile = keyFile
+	return m.saveLocked()
+}
+
 // GetMigrationNotice returns a deep copy of the migration notice, or nil if none.
 func (m *Manager) GetMigrationNotice() *MigrationNotice {
 	m.mu.RLock()
@@ -674,6 +726,10 @@ func (m *Manager) Get() Config {
 	if m.cfg.CheckUpdates != nil {
 		b := *m.cfg.CheckUpdates
 		c.CheckUpdates = &b
+	}
+	if m.cfg.Web.SSLEnabled != nil {
+		b := *m.cfg.Web.SSLEnabled
+		c.Web.SSLEnabled = &b
 	}
 	c.Routers = make([]RouterConfig, len(m.cfg.Routers))
 	for i, r := range m.cfg.Routers {

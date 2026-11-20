@@ -839,15 +839,15 @@ func TestTier1_F07_01_AutoDetectionOfLegacyV1Config(t *testing.T) {
 	bakPath := target + ".v1.bak"
 	h.AssertFileExists(bakPath)
 
-	// 2. Verify in-memory and disk configuration has config_version == 2
+	// 2. Verify in-memory and disk configuration has config_version == 3
 	cfg := mgr.Get()
-	if cfg.ConfigVersion != 2 {
-		t.Fatalf("expected ConfigVersion 2, got %d", cfg.ConfigVersion)
+	if cfg.ConfigVersion != config.CurrentConfigVersion {
+		t.Fatalf("expected ConfigVersion %d, got %d", config.CurrentConfigVersion, cfg.ConfigVersion)
 	}
 
 	_, raw := h.ReadConfigFile(target)
-	if v, ok := raw["config_version"].(float64); !ok || int(v) != 2 {
-		t.Fatalf("expected disk config_version 2, got %v", raw["config_version"])
+	if v, ok := raw["config_version"].(float64); !ok || int(v) != config.CurrentConfigVersion {
+		t.Fatalf("expected disk config_version %d, got %v", config.CurrentConfigVersion, raw["config_version"])
 	}
 }
 
@@ -918,10 +918,10 @@ func TestTier1_F07_04_BackupFilePermissions0600(t *testing.T) {
 	}
 }
 
-// T1-F07-05: Loading Already-Migrated v2 Config (No Backup Created)
-func TestTier1_F07_05_LoadingAlreadyMigratedV2Config(t *testing.T) {
+// T1-F07-05: Loading Already-Migrated v3 Config (No Backup Created)
+func TestTier1_F07_05_LoadingAlreadyMigratedV3Config(t *testing.T) {
 	h := NewHarness(t)
-	target := h.CreateV2Config("clean_v2.json")
+	target := h.CreateV3Config("clean_v3.json")
 
 	_, err := config.NewManager(target)
 	if err != nil {
@@ -930,6 +930,7 @@ func TestTier1_F07_05_LoadingAlreadyMigratedV2Config(t *testing.T) {
 
 	h.AssertFileNotExists(target + ".v1.bak")
 	h.AssertFileNotExists(target + ".v2.bak")
+	h.AssertFileNotExists(target + ".v3.bak")
 }
 
 // ============================================================================
@@ -1202,14 +1203,14 @@ func TestTier1_F09_05_CleanConfigZeroUnknownKeys(t *testing.T) {
 // Feature 10: Config Incompatible Version Guard (T1-F10-01 .. T1-F10-05)
 // ============================================================================
 
-// T1-F10-01: config_version: 3 Rejection Error
-func TestTier1_F10_01_ConfigVersion3RejectionError(t *testing.T) {
+// T1-F10-01: config_version: 4 Rejection Error
+func TestTier1_F10_01_ConfigVersion4RejectionError(t *testing.T) {
 	h := NewHarness(t)
-	target := h.CreateIncompatibleConfig("incompatible_v3.json", 3)
+	target := h.CreateIncompatibleConfig("incompatible_v4.json", 4)
 
 	_, err := config.NewManager(target)
 	if err == nil {
-		t.Fatalf("expected error loading config_version: 3, got nil")
+		t.Fatalf("expected error loading config_version: 4, got nil")
 	}
 
 	errStr := strings.ToLower(err.Error())
@@ -1221,7 +1222,7 @@ func TestTier1_F10_01_ConfigVersion3RejectionError(t *testing.T) {
 // T1-F10-02: Incompatible Version Leaves File Completely Untouched
 func TestTier1_F10_02_IncompatibleVersionLeavesFileUntouched(t *testing.T) {
 	h := NewHarness(t)
-	target := h.CreateIncompatibleConfig("untouched_v3.json", 3)
+	target := h.CreateIncompatibleConfig("untouched_v4.json", 4)
 
 	dataBefore, _ := os.ReadFile(target)
 	hBefore := sha256.Sum256(dataBefore)
@@ -1239,10 +1240,11 @@ func TestTier1_F10_02_IncompatibleVersionLeavesFileUntouched(t *testing.T) {
 // T1-F10-03: No Backup File Created on Incompatible Version
 func TestTier1_F10_03_NoBackupFileCreatedOnIncompatibleVersion(t *testing.T) {
 	h := NewHarness(t)
-	target := h.CreateIncompatibleConfig("no_backup_v3.json", 3)
+	target := h.CreateIncompatibleConfig("no_backup_v4.json", 4)
 
 	_, _ = config.NewManager(target)
 
+	h.AssertFileNotExists(target + ".v4.bak")
 	h.AssertFileNotExists(target + ".v3.bak")
 	h.AssertFileNotExists(target + ".v2.bak")
 	h.AssertFileNotExists(target + ".v1.bak")
@@ -1251,7 +1253,7 @@ func TestTier1_F10_03_NoBackupFileCreatedOnIncompatibleVersion(t *testing.T) {
 // T1-F10-04: Daemon Startup Failure with Exit Code 1
 func TestTier1_F10_04_DaemonStartupFailureExitCode1(t *testing.T) {
 	h := NewHarness(t)
-	target := h.CreateIncompatibleConfig("daemon_v3.json", 3)
+	target := h.CreateIncompatibleConfig("daemon_v4.json", 4)
 
 	res := h.RunCLI(CLIOptions{Args: []string{"-config=" + target}})
 	if res.ExitCode != 1 {
@@ -1259,17 +1261,17 @@ func TestTier1_F10_04_DaemonStartupFailureExitCode1(t *testing.T) {
 	}
 }
 
-// T1-F10-05: Current Version Boundary Acceptance (config_version: 2)
+// T1-F10-05: Current Version Boundary Acceptance (config_version: 3)
 func TestTier1_F10_05_CurrentVersionBoundaryAcceptance(t *testing.T) {
 	h := NewHarness(t)
-	target := h.CreateV2Config("valid_v2.json")
+	target := h.CreateV3Config("valid_v3.json")
 
 	mgr, err := config.NewManager(target)
 	if err != nil {
-		t.Fatalf("expected config_version: 2 to be accepted cleanly, got error: %v", err)
+		t.Fatalf("expected config_version: 3 to be accepted cleanly, got error: %v", err)
 	}
-	if mgr.Get().ConfigVersion != 2 {
-		t.Fatalf("expected ConfigVersion 2, got %d", mgr.Get().ConfigVersion)
+	if mgr.Get().ConfigVersion != 3 {
+		t.Fatalf("expected ConfigVersion 3, got %d", mgr.Get().ConfigVersion)
 	}
 }
 
@@ -1381,7 +1383,7 @@ func TestTier1_F11_04_PersistenceOfDismissalAcrossReloads(t *testing.T) {
 // T1-F11-05: Clean System Shows No Migration Banner
 func TestTier1_F11_05_CleanSystemShowsNoMigrationBanner(t *testing.T) {
 	h := NewHarness(t)
-	target := h.CreateV2Config("clean_banner.json")
+	target := h.CreateV3Config("clean_banner.json")
 
 	daemon := h.StartDaemon(target)
 	defer daemon.Stop()
@@ -1391,6 +1393,6 @@ func TestTier1_F11_05_CleanSystemShowsNoMigrationBanner(t *testing.T) {
 		t.Fatalf("expected HTTP 200, got %d", resp.StatusCode)
 	}
 	if strings.Contains(body, "migration-banner") {
-		t.Fatalf("migration banner unexpectedly rendered on clean v2 config")
+		t.Fatalf("migration banner unexpectedly rendered on clean v3 config")
 	}
 }

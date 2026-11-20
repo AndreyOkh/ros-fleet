@@ -53,7 +53,7 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Prepare directories and SSH home
-RUN mkdir -p /app/backups/binary /app/backups/exports /home/rosfleet/.ssh && \
+RUN mkdir -p /app/backups/binary /app/backups/exports /app/certs /home/rosfleet/.ssh && \
     chown -R rosfleet:rosfleet /app /home/rosfleet && \
     chmod 700 /home/rosfleet/.ssh
 

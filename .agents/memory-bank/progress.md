@@ -48,6 +48,15 @@
 - [x] **Автоматическое слияние расхождений Git (`Auto-Fetch & Merge on Diverged Remote`)**:
   - Реализованы `FetchAndMerge()` и `fetchAndMergeLocked()` с авто-восстановлением при несовпадении веток в `pushLocked`.
   - Безопасное слияние с `--allow-unrelated-histories` и `-X ours` (приоритет свежей конфигурации роутера при конфликтах).
+- [x] **Встроенное шифрование веб-трафика SSL/TLS (HTTPS) без сторонних зависимостей**:
+  - Схема конфигурации v3 (`CurrentConfigVersion = 3`), миграция v2 -> v3 с бэкапом `.v2.bak` и уведомлением `MigrationNotice`.
+  - Параметры `web.ssl_enabled` (`*bool`, по умолчанию `true`), `web.ssl_cert_file`, `web.ssl_key_file` и CLI-флаг `-ssl`.
+  - Валидация путей сертификата и приватного ключа.
+  - Автогенерация самоподписанного ECDSA (P-256) сертификата на 10 лет с SAN (localhost, hostname, 127.0.0.1, ::1, локальные интерфейсы) в `certs/` и атомарная запись путей в `config.json`.
+  - Мультиплексирующий сетевой слушатель `splitListener` с авторедиректом открытых HTTP-запросов на HTTPS (`308 Permanent Redirect`) на едином порту без `400 Bad Request`.
+  - Заголовок HSTS (`Strict-Transport-Security: max-age=31536000; includeSubDomains`).
+  - Поддержка тома `./certs:/app/certs:rw` в `compose.yaml` и автокоррекция прав в `docker-entrypoint.sh`.
+  - 100% прохождение тестов под `-race`.
   - 100% покрытие unit-тестами (`TestGitDivergedRemoteAutoMergeAndPush`).
 - [x] **Переход на версию v2.2.0**: обновление `Makefile` и создание тега `v2.2.0`.
 - [x] **Автоматическая синхронизация прав томов Docker (`su-exec` & `docker-entrypoint.sh`)**:

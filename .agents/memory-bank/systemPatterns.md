@@ -55,3 +55,9 @@ internal/
    - При отклонении `git push` (например, non-fast-forward из-за внешних коммитов в удаленном репозитории) сервис автоматически выполняет `git fetch origin <branch>` и слияние `git merge --no-edit --allow-unrelated-histories -X ours origin/<branch>`.
    - Стратегия `-X ours` гарантирует приоритет только что выгруженного с роутера конфига в случае конфликта и исключает блокировку процесса.
    - После успешного слияния выполняется повторный `git push`. При неудаче слияния вызывается `git merge --abort` для сохранения чистоты рабочей директории.
+10. **Встроенный SSL/TLS и мультиплексирующий авторедирект (`internal/web/tls.go`):**
+   - Полный отказ от сторонних криптографических библиотек — использование только стандартной библиотеки Go (`crypto/tls`, `crypto/x509`, `crypto/ecdsa`, `encoding/pem`, `net`, `bufio`).
+   - Автоматическая генерация 10-летнего ECDSA P-256 сертификата с SAN при первом запуске и атомарное сохранение путей в `config.json` (`web.ssl_cert_file`, `web.ssl_key_file`).
+   - Мультиплексирующий `net.Listener` (`splitListener`) с `bufio.Reader.Peek(1)`: байт `0x16` (TLS) передается в TLS-стек, а открытый HTTP-трафик перенаправляется `HTTP/1.1 308 Permanent Redirect` на `https://<Host><RequestURI>` на том же самом порту без падений с `400 Bad Request`.
+   - Принудительный заголовок HSTS (`Strict-Transport-Security: max-age=31536000; includeSubDomains`).
+   - Управление шифрованием исключительно со стороны сервера (`config.json` / CLI-флаг `-ssl`).

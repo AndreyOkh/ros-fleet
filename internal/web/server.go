@@ -2,10 +2,12 @@ package web
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -189,6 +191,10 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 		log.Info("Basic Auth enabled for web dashboard", slog.String("user", cfg.Web.AuthUser))
 	}
 
+	if cfg.IsSSLEnabled() {
+		handler = hstsMiddleware(handler)
+	}
+
 	s.httpServer = &http.Server{
 		Addr:    cfg.Web.ListenAddr,
 		Handler: handler,
@@ -199,10 +205,58 @@ func NewServer(cfgMgr *config.Manager, runner *runner.Runner, stateMgr *state.St
 
 // Start launches the HTTP server in a background goroutine.
 func (s *Server) Start() error {
-	s.logger.Info("Starting web dashboard", slog.String("listen_addr", s.httpServer.Addr))
+	cfg := s.cfgMgr.Get()
+	addr := s.httpServer.Addr
+	if addr == "" {
+		addr = ":8080"
+	}
+
+	baseLn, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+
+	scheme := "http"
+	var ln net.Listener = baseLn
+
+	if cfg.IsSSLEnabled() {
+		scheme = "https"
+		certFile, keyFile, err := EnsureCertificates(s.cfgMgr, s.logger)
+		if err != nil {
+			_ = baseLn.Close()
+			return fmt.Errorf("failed to ensure SSL certificates: %w", err)
+		}
+
+		tlsConfig, err := NewTLSConfig(certFile, keyFile)
+		if err != nil {
+			_ = baseLn.Close()
+			return fmt.Errorf("failed to configure TLS: %w", err)
+		}
+
+		defaultHost := addr
+		if strings.HasPrefix(defaultHost, ":") {
+			defaultHost = "localhost" + defaultHost
+		}
+		splitL := newSplitListener(baseLn, defaultHost, s.logger)
+		ln = tls.NewListener(splitL, tlsConfig)
+	}
+
+	displayHost := addr
+	if strings.HasPrefix(displayHost, ":") {
+		displayHost = "localhost" + displayHost
+	} else if strings.HasPrefix(displayHost, "0.0.0.0:") {
+		displayHost = "localhost:" + strings.TrimPrefix(displayHost, "0.0.0.0:")
+	}
+
+	s.logger.Info("Starting web dashboard",
+		slog.String("listen_addr", addr),
+		slog.String("url", fmt.Sprintf("%s://%s", scheme, displayHost)),
+		slog.Bool("ssl_enabled", cfg.IsSSLEnabled()),
+	)
+
 	go func() {
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.logger.Error("Web server ListenAndServe error", slog.Any("error", err))
+		if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+			s.logger.Error("Web server Serve error", slog.Any("error", err))
 		}
 	}()
 	return nil

@@ -49,7 +49,16 @@ func main() {
 	selfUpdate := flag.Bool("self-update", false, "Perform self-update to latest release")
 	noUpdateCheck := flag.Bool("no-update-check", false, "Disable automatic check for updates on startup and in background (for offline/isolated environments)")
 	disableUpdateCheck := flag.Bool("disable-update-check", false, "Alias for -no-update-check")
+	sslFlag := flag.Bool("ssl", true, "Enable SSL/TLS encryption for web dashboard")
 	flag.Parse()
+
+	var sslExplicit *bool
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "ssl" {
+			v := *sslFlag
+			sslExplicit = &v
+		}
+	})
 
 	if *showVersion {
 		v := versionPkg.Get()
@@ -93,6 +102,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if sslExplicit != nil {
+		cfgMgr.OverrideSSLEnabled(*sslExplicit)
+	}
+
 	initialCfg := cfgMgr.Get()
 	logger.Info("Configuration loaded successfully",
 		slog.Int("routers_count", len(initialCfg.Routers)),
@@ -103,6 +116,9 @@ func main() {
 		slog.Any("schedule_times", initialCfg.Schedule.Times),
 		slog.String("schedule_tz", initialCfg.Schedule.Timezone),
 		slog.Bool("web_enabled", initialCfg.Web.Enabled),
+		slog.Bool("ssl_enabled", initialCfg.IsSSLEnabled()),
+		slog.String("ssl_cert_file", initialCfg.Web.SSLCertFile),
+		slog.String("ssl_key_file", initialCfg.Web.SSLKeyFile),
 		slog.Bool("git_enabled", initialCfg.Git.Enabled),
 		slog.Bool("update_check_enabled", initialCfg.IsUpdateCheckEnabled()),
 	)

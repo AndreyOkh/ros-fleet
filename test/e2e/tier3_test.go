@@ -29,11 +29,11 @@ func TestTier3_TC01_ConfigMigration_WebUIMigrationBanner_DismissAction(t *testin
 	daemon := h.StartDaemon(cfgPath)
 	defer daemon.Stop()
 
-	// 1. Filesystem assertions: .v1.bak exists and v2 saved
+	// 1. Filesystem assertions: .v1.bak exists and v3 saved
 	h.AssertFileExists(cfgPath + ".v1.bak")
 	_, raw := h.ReadConfigFile(cfgPath)
-	if v, ok := raw["config_version"].(float64); !ok || int(v) != 2 {
-		t.Fatalf("expected config_version 2, got: %v", raw["config_version"])
+	if v, ok := raw["config_version"].(float64); !ok || int(v) != config.CurrentConfigVersion {
+		t.Fatalf("expected config_version %d, got: %v", config.CurrentConfigVersion, raw["config_version"])
 	}
 
 	// 2. Web UI initial load: must render banner
@@ -279,10 +279,10 @@ func TestTier3_TC06_SemVerDirtyPrereleaseBuild_Vs_NewerEqualOlderReleases(t *tes
 	}
 }
 
-// TC-T3-07: Incompatible Config Version (config_version > 2) + Web Server / Daemon Boot Guard
+// TC-T3-07: Incompatible Config Version (config_version > 3) + Web Server / Daemon Boot Guard
 func TestTier3_TC07_IncompatibleConfigVersion_DaemonBootGuard(t *testing.T) {
 	h := NewHarness(t)
-	cfgPath := h.CreateIncompatibleConfig("incompat_t3_07.json", 3)
+	cfgPath := h.CreateIncompatibleConfig("incompat_t3_07.json", 4)
 
 	dataBefore, _ := os.ReadFile(cfgPath)
 	hBefore := sha256.Sum256(dataBefore)
@@ -292,7 +292,7 @@ func TestTier3_TC07_IncompatibleConfigVersion_DaemonBootGuard(t *testing.T) {
 		Timeout: 3 * time.Second,
 	})
 	if res.ExitCode != 1 {
-		t.Fatalf("expected exit code 1 on incompatible config_version 3, got %d (err: %v)", res.ExitCode, res.Err)
+		t.Fatalf("expected exit code 1 on incompatible config_version 4, got %d (err: %v)", res.ExitCode, res.Err)
 	}
 	if res.Duration >= 2*time.Second {
 		t.Fatalf("process hung on startup for %v instead of fast abort", res.Duration)
@@ -307,6 +307,7 @@ func TestTier3_TC07_IncompatibleConfigVersion_DaemonBootGuard(t *testing.T) {
 		t.Fatalf("incompatible configuration file was mutated on disk")
 	}
 
+	h.AssertFileNotExists(cfgPath + ".v4.bak")
 	h.AssertFileNotExists(cfgPath + ".v3.bak")
 	h.AssertFileNotExists(cfgPath + ".v2.bak")
 }
@@ -535,9 +536,9 @@ func TestTier3_TC13_MultipleUnknownFieldsInNestedSections_AtomicConfigPersistenc
 		t.Fatalf("expected at least 4 unknown keys collected, got %d: %v", len(notice.UnknownKeys), notice.UnknownKeys)
 	}
 
-	// Verify atomic save as valid v2 JSON
+	// Verify atomic save as valid current JSON
 	_, rawDisk := h.ReadConfigFile(cfgPath)
-	if v, ok := rawDisk["config_version"].(float64); !ok || int(v) != 2 {
-		t.Fatalf("expected disk config_version 2, got: %v", rawDisk["config_version"])
+	if v, ok := rawDisk["config_version"].(float64); !ok || int(v) != config.CurrentConfigVersion {
+		t.Fatalf("expected disk config_version %d, got: %v", config.CurrentConfigVersion, rawDisk["config_version"])
 	}
 }

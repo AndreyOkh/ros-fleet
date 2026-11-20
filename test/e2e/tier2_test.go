@@ -1047,8 +1047,8 @@ func TestTier2_F10_04_NullVersionField(t *testing.T) {
 	// null should be treated as 0 / missing (v1)
 	mgr, err := config.NewManager(target)
 	if err == nil {
-		if mgr.Get().ConfigVersion != 2 {
-			t.Errorf("expected migrated ConfigVersion 2, got %d", mgr.Get().ConfigVersion)
+		if mgr.Get().ConfigVersion != config.CurrentConfigVersion {
+			t.Errorf("expected migrated ConfigVersion %d, got %d", config.CurrentConfigVersion, mgr.Get().ConfigVersion)
 		}
 	}
 }
